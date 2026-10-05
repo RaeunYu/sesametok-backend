@@ -1,0 +1,20 @@
+HANDOFF_MESSAGING.md
+
+# local development artefacts (never commit)
+.venv/
+.devdata/
+.probe/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.DS_Store
+
+# never commit local runtime state or secrets
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+api_token
+archive.key

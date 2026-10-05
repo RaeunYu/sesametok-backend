@@ -1,0 +1,26 @@
+#!/bin/sh
+# Thin wrapper so the backend can be launched from zsh without activating a venv.
+#
+# The fixed venv path matters: macOS TCC grants (Full Disk Access, Accessibility)
+# are bound to the responsible executable's absolute path (HANDOFF_MESSAGING §2.3).
+# Development uses <repo>/.venv; production uses ~/.local/share/sesametok-backend/venv.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(dirname -- "$here")
+
+if [ -n "${SESAMETOK_VENV:-}" ]; then
+    venv=$SESAMETOK_VENV
+elif [ -x "$root/.venv/bin/python" ]; then
+    venv=$root/.venv
+else
+    venv=$HOME/.local/share/sesametok-backend/venv
+fi
+
+if [ ! -x "$venv/bin/python" ]; then
+    echo "sesametok-backend: no venv at $venv" >&2
+    echo "create one with: python3 -m venv \"$venv\" && \"$venv/bin/pip\" install -e \"$root\"" >&2
+    exit 1
+fi
+
+exec "$venv/bin/python" -m sesametok_backend "$@"
