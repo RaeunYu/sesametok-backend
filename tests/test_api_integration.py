@@ -1,7 +1,7 @@
-"""Integration: the real poller/archive behind the real HTTP API.
+"""통합: 실제 HTTP API 뒤에 실제 폴러/아카이브를 둔다.
 
-No KakaoTalk involved — the source is synthetic — but the poller, the encrypted
-archive, the event bus, and the HTTP server are the production objects.
+카카오톡은 관여하지 않는다 — 소스는 합성이다 — 하지만 폴러, 암호화 아카이브, 이벤트 버스,
+HTTP 서버는 전부 프로덕션 객체다.
 """
 
 from __future__ import annotations
@@ -139,7 +139,7 @@ def _get_json(service, path):
 def test_backfill_then_live_event_over_the_api(service) -> None:
     api, poller, _, _ = service
 
-    # First poll: backfill, no events.
+    # 첫 폴링: 백필만 하고 이벤트는 없다.
     first = poller.poll_once()
     assert first.backfill is True
 
@@ -149,7 +149,7 @@ def test_backfill_then_live_event_over_the_api(service) -> None:
     assert payload["archive"]["messages"] == 1
     assert payload["archive"]["event_seq"] == 0
 
-    # Second poll sees a new message and records exactly one event.
+    # 두 번째 폴링은 새 메시지를 보고 이벤트를 정확히 하나 기록한다.
     second = poller.poll_once()
     assert second.created == 1
 
@@ -157,12 +157,12 @@ def test_backfill_then_live_event_over_the_api(service) -> None:
     assert payload["archive"]["messages"] == 2
     assert payload["archive"]["event_seq"] == 1
 
-    # The message is served with the documented DTO fields.
+    # 메시지는 문서화된 DTO 필드로 서빙된다.
     status, page = _get_json(api, "/v1/rooms/100/messages?limit=10")
     assert [m["message_id"] for m in page["messages"]] == ["100-1", "100-2"]
     assert set(page["messages"][0]) >= {"message_id", "timestamp", "text", "is_placeholder"}
 
-    # SSE replays the recorded event from the beginning.
+    # SSE는 기록된 이벤트를 처음부터 재생한다.
     status, body = _http(api, "GET", "/v1/events?since=0")
     text = body.decode("utf-8", errors="replace")
     assert status == 200

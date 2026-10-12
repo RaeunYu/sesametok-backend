@@ -1,1 +1,1 @@
-"""KakaoTalk access: storage discovery, key derivation, reading, normalising."""
+"""카카오톡 접근: 저장소 탐색, 키 유도, 읽기, 정규화."""

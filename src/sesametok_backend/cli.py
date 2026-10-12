@@ -1,8 +1,8 @@
-"""``sesametok-backend`` command line interface.
+"""``sesametok-backend`` 커맨드라인 인터페이스.
 
-``foreground`` runs the process in this terminal; ``start``/``stop``/``restart``/
-``install``/``uninstall`` manage the launchd LaunchAgent so the backend survives
-closing the terminal and logging back in.
+``foreground``는 이 터미널에서 프로세스를 실행하고; ``start``/``stop``/``restart``/
+``install``/``uninstall``은 launchd LaunchAgent를 관리하므로 백엔드는 터미널을 닫고
+다시 로그인해도 살아남는다.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import argparse
 import json
 import subprocess
 import sys
+import unicodedata
 
 from . import __version__, diagnostics
 from .config import ConfigError, Settings
@@ -42,19 +43,19 @@ EXIT_FAILURE = 1
 EXIT_CONFIG = 2
 EXIT_UNAVAILABLE = 3
 
-#: How long to wait for launchd to report a lifecycle change.
+#: launchd가 수명주기 변경을 보고할 때까지 기다리는 시간.
 START_TIMEOUT_SECONDS = 10.0
 STOP_TIMEOUT_SECONDS = 10.0
 
 
 def _launch_agent(settings: Settings) -> LaunchAgent:
-    """Build the LaunchAgent for *settings* (a seam for tests)."""
+    """*settings*에 대한 LaunchAgent를 만든다 (테스트용 이음매)."""
 
     return LaunchAgent(settings)
 
 
 def _require_managed_plist(agent: LaunchAgent) -> bool:
-    """Refuse to write or run ``launchctl`` for a machine-owned plist path."""
+    """머신이 소유한 plist 경로에 대해서는 쓰기와 ``launchctl`` 실행을 거부한다."""
 
     try:
         require_plist_path_allowed(agent.plist_path)
@@ -64,7 +65,7 @@ def _require_managed_plist(agent: LaunchAgent) -> bool:
     return True
 
 
-# --------------------------------------------------------------------- commands
+# --------------------------------------------------------------------------- 명령
 
 
 def cmd_foreground(args: argparse.Namespace) -> int:
@@ -83,8 +84,22 @@ def cmd_foreground(args: argparse.Namespace) -> int:
         return EXIT_OK
 
 
+#: ``status`` 라벨 정렬 폭(터미널 표시 폭 기준).
+LABEL_WIDTH = 17
+
+
+def _label(text: str, width: int = LABEL_WIDTH) -> str:
+    """라벨을 터미널 표시 폭에 맞춰 정렬한다(한글 등 전각 문자는 2칸)."""
+
+    display = sum(
+        2 if unicodedata.east_asian_width(character) in ("W", "F") else 1
+        for character in text
+    )
+    return text + " " * max(1, width - display) + ":"
+
+
 def cmd_start(args: argparse.Namespace) -> int:
-    """Start under launchd. Idempotent: a running backend is left alone."""
+    """launchd 아래에서 시작한다. 멱등적이다: 실행 중인 백엔드는 건드리지 않는다."""
 
     settings = Settings.from_env()
     agent = _launch_agent(settings)
@@ -94,36 +109,36 @@ def cmd_start(args: argparse.Namespace) -> int:
     owner = running_pid(settings)
     if agent.is_running() or owner is not None:
         suffix = f" (pid {owner})" if owner else ""
-        print(f"sesametok-backend is already running{suffix}; nothing to do.")
+        print(f"sesametok-backend가 이미 실행 중입니다{suffix}. 할 일이 없습니다.")
         return EXIT_OK
 
     if not agent.plist_path.exists():
         agent.install_plist()
-        print(f"installed LaunchAgent: {agent.plist_path}")
+        print(f"LaunchAgent를 설치했습니다: {agent.plist_path}")
 
     result = agent.kickstart() if agent.is_loaded() else agent.bootstrap()
     if not result.ok:
         print(
-            f"sesametok-backend: launchctl could not start the agent: {result.message}",
+            f"sesametok-backend: launchctl이 에이전트를 시작하지 못했습니다: {result.message}",
             file=sys.stderr,
         )
         return EXIT_FAILURE
     if not wait_until_running(agent, timeout=START_TIMEOUT_SECONDS):
         print(
-            "sesametok-backend: the LaunchAgent was loaded but did not start; "
-            "check `sesametok-backend logs` and `launchctl print` for details.",
+            "sesametok-backend: LaunchAgent가 로드되었지만 시작하지 않았습니다. "
+            "자세한 내용은 `sesametok-backend logs`와 `launchctl print`를 확인하세요.",
             file=sys.stderr,
         )
         return EXIT_FAILURE
 
     started = agent.status()
     suffix = f" (pid {started.pid})" if started.pid else ""
-    print(f"sesametok-backend started{suffix}.")
+    print(f"sesametok-backend가 시작되었습니다{suffix}.")
     return EXIT_OK
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
-    """Stop via ``launchctl bootout`` so ``KeepAlive`` cannot fight the stop."""
+    """``launchctl bootout``으로 중지하므로 ``KeepAlive``가 중지를 방해할 수 없다."""
 
     settings = Settings.from_env()
     agent = _launch_agent(settings)
@@ -131,41 +146,41 @@ def cmd_stop(args: argparse.Namespace) -> int:
         return EXIT_FAILURE
 
     owner = running_pid(settings)
-    # Only ask launchd about a plist we actually installed.
+    # 실제로 설치한 plist에 대해서만 launchd에 묻는다.
     loaded = agent.is_loaded() if agent.plist_path.exists() else False
     if not loaded and owner is None:
-        print("sesametok-backend is not running.")
+        print("sesametok-backend가 실행 중이 아닙니다.")
         return EXIT_OK
 
     if loaded:
         result = agent.bootout()
         if not result.ok and not looks_not_found(result.message):
             print(
-                f"sesametok-backend: launchctl bootout failed: {result.message}",
+                f"sesametok-backend: launchctl bootout에 실패했습니다: {result.message}",
                 file=sys.stderr,
             )
             return EXIT_FAILURE
         if not wait_until_stopped(agent, timeout=STOP_TIMEOUT_SECONDS):
             print(
-                "sesametok-backend: the LaunchAgent is still running; try again.",
+                "sesametok-backend: LaunchAgent가 아직 실행 중입니다; 다시 시도하세요.",
                 file=sys.stderr,
             )
             return EXIT_FAILURE
     else:
-        # A development `foreground` run is not launchd-managed; the lock is ours.
+        # 개발용 `foreground` 실행은 launchd가 관리하지 않는다; 잠금은 우리 것이다.
         if not terminate_process(owner, timeout=STOP_TIMEOUT_SECONDS):
             print(
-                f"sesametok-backend: process {owner} did not stop.",
+                f"sesametok-backend: 프로세스 {owner}이(가) 중지되지 않았습니다.",
                 file=sys.stderr,
             )
             return EXIT_FAILURE
 
-    print("sesametok-backend stopped.")
+    print("sesametok-backend가 중지되었습니다.")
     return EXIT_OK
 
 
 def cmd_restart(args: argparse.Namespace) -> int:
-    """Bootout then bootstrap once — never two live instances."""
+    """bootout한 뒤 bootstrap을 한 번만 — 살아 있는 인스턴스가 둘이 되지 않도록."""
 
     settings = Settings.from_env()
     agent = _launch_agent(settings)
@@ -177,7 +192,7 @@ def cmd_restart(args: argparse.Namespace) -> int:
         result = agent.bootout()
         if not result.ok and not looks_not_found(result.message):
             print(
-                f"sesametok-backend: launchctl bootout failed: {result.message}",
+                f"sesametok-backend: launchctl bootout에 실패했습니다: {result.message}",
                 file=sys.stderr,
             )
             return EXIT_FAILURE
@@ -193,55 +208,55 @@ def cmd_restart(args: argparse.Namespace) -> int:
     result = agent.bootstrap()
     if not result.ok and not agent.is_loaded():
         print(
-            f"sesametok-backend: launchctl could not start the agent: {result.message}",
+            f"sesametok-backend: launchctl이 에이전트를 시작하지 못했습니다: {result.message}",
             file=sys.stderr,
         )
         return EXIT_FAILURE
     if not wait_until_running(agent, timeout=START_TIMEOUT_SECONDS):
         print(
-            "sesametok-backend: the LaunchAgent was loaded but did not start.",
+            "sesametok-backend: LaunchAgent가 로드되었지만 시작하지 않았습니다.",
             file=sys.stderr,
         )
         return EXIT_FAILURE
 
     started = agent.status()
     suffix = f" (pid {started.pid})" if started.pid else ""
-    print(f"sesametok-backend restarted{suffix}.")
+    print(f"sesametok-backend가 재시작되었습니다{suffix}.")
     return EXIT_OK
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    """Write the plist, bootstrap it, and explain the TCC grant target."""
+    """plist를 쓰고 bootstrap한 뒤 TCC 권한 부여 대상을 안내한다."""
 
     settings = Settings.from_env()
     agent = _launch_agent(settings)
     if not _require_managed_plist(agent):
         return EXIT_FAILURE
     path = agent.install_plist()
-    print(f"LaunchAgent written: {path}")
+    print(f"LaunchAgent를 기록했습니다: {path}")
 
     result = agent.bootstrap()
     if not result.ok and not agent.is_loaded():
         print(
-            f"sesametok-backend: launchctl bootstrap failed: {result.message}",
+            f"sesametok-backend: launchctl bootstrap에 실패했습니다: {result.message}",
             file=sys.stderr,
         )
         return EXIT_FAILURE
-    print("Login autostart enabled (RunAtLoad + KeepAlive).")
+    print("로그인 자동 시작을 켰습니다 (RunAtLoad + KeepAlive).")
 
     print()
-    print("macOS binds Full Disk Access and Accessibility to the responsible")
-    print("process, so with a LaunchAgent you must grant them to the executable")
-    print("launchd starts — not to Terminal.")
-    print(f"  grant target: {diagnostics.python_executable()}")
-    print("  System Settings > Privacy & Security > Full Disk Access")
-    print("  then System Settings > Privacy & Security > Accessibility")
-    print("  (`sesametok-backend permissions` / `--accessibility` open those panes)")
+    print("macOS는 전체 디스크 접근 권한과 손쉬운 사용 권한을 책임 프로세스에")
+    print("귀속시키므로, LaunchAgent를 쓰면 launchd가 실행하는 실행 파일에")
+    print("권한을 주어야 합니다 — Terminal이 아닙니다.")
+    print(f"  권한 부여 대상: {diagnostics.python_executable()}")
+    print("  시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한")
+    print("  그다음 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용")
+    print("  (`sesametok-backend permissions` / `--accessibility`가 해당 창을 엽니다)")
     return EXIT_OK
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
-    """Bootout, remove the plist, and say what was left on disk."""
+    """bootout하고 plist를 제거한 뒤 디스크에 남은 것을 알린다."""
 
     settings = Settings.from_env()
     agent = _launch_agent(settings)
@@ -253,7 +268,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         result = agent.bootout()
         if not result.ok and not looks_not_found(result.message):
             print(
-                f"sesametok-backend: launchctl bootout failed: {result.message}",
+                f"sesametok-backend: launchctl bootout에 실패했습니다: {result.message}",
                 file=sys.stderr,
             )
             return EXIT_FAILURE
@@ -262,24 +277,24 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     try:
         removed = agent.remove_plist()
     except OSError as exc:
-        print(f"sesametok-backend: could not remove {agent.plist_path}: {exc}",
+        print(f"sesametok-backend: {agent.plist_path}을(를) 제거하지 못했습니다: {exc}",
               file=sys.stderr)
         return EXIT_FAILURE
 
     print(
-        f"LaunchAgent removed: {agent.plist_path}"
+        f"LaunchAgent를 제거했습니다: {agent.plist_path}"
         if removed
-        else f"LaunchAgent was not installed at {agent.plist_path}."
+        else f"LaunchAgent가 {agent.plist_path}에 설치되어 있지 않았습니다."
     )
-    print(f"data left untouched: {settings.data_dir}")
-    print(f"logs left untouched: {settings.log_dir}")
-    print("(the encrypted archive is still there; delete the data dir by hand "
-          "only if you really want a clean slate)")
+    print(f"데이터는 그대로 두었습니다: {settings.data_dir}")
+    print(f"로그는 그대로 두었습니다: {settings.log_dir}")
+    print("(암호화 아카이브는 그대로 있습니다; 정말로 깨끗한 상태를 원할 때만 "
+          "데이터 디렉터리를 직접 삭제하세요)")
     return EXIT_OK
 
 
 def cmd_archive_key(args: argparse.Namespace) -> int:
-    """Show the archive key so the user can back it up (ADR-004)."""
+    """사용자가 백업할 수 있도록 아카이브 키를 보여준다 (ADR-004)."""
 
     settings = Settings.from_env()
     try:
@@ -291,13 +306,13 @@ def cmd_archive_key(args: argparse.Namespace) -> int:
     reveal = args.force or sys.stdout.isatty()
     if not reveal:
         print(
-            "refusing to print the archive key to a non-interactive output "
-            "(it would end up in a log); re-run in a terminal or pass --force",
+            "비대화형 출력에는 아카이브 키를 출력하지 않습니다 "
+            "(로그에 남게 됩니다); 터미널에서 다시 실행하거나 --force를 넘기세요",
             file=sys.stderr,
         )
         return EXIT_UNAVAILABLE
 
-    print(f"source: {resolved.source}", file=sys.stderr)
+    print(f"출처: {resolved.source}", file=sys.stderr)
     print(KEY_BACKUP_HELP, file=sys.stderr)
     print(key_to_hex(resolved.key))
     return EXIT_OK
@@ -309,7 +324,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     report = diagnostics.collect(settings, store.store_roots())
     agent = _launch_agent(settings)
     plist_installed = agent.plist_path.exists()
-    # Read-only probe, and only for a path we are allowed to look at.
+    # 읽기 전용 조회이며, 살펴봐도 되는 경로에만 수행한다.
     if plist_installed and plist_path_is_allowed(agent.plist_path):
         launchd = agent.status()
     else:
@@ -334,27 +349,27 @@ def cmd_status(args: argparse.Namespace) -> int:
         return EXIT_OK
 
     if not plist_installed:
-        launchd_line = "not installed"
+        launchd_line = "설치되지 않음"
     elif launchd.running:
-        launchd_line = "running" + (f" (pid {launchd.pid})" if launchd.pid else "")
+        launchd_line = "실행 중" + (f" (pid {launchd.pid})" if launchd.pid else "")
     elif launchd.loaded:
-        launchd_line = f"loaded, not running ({launchd.state or 'unknown'})"
+        launchd_line = f"로드됨, 실행 중 아님 ({launchd.state or '알 수 없음'})"
     else:
-        launchd_line = "loaded but unavailable"
+        launchd_line = "로드되었지만 사용할 수 없음"
 
     print(f"sesametok-backend {__version__}")
-    print(f"state          : {'running' if pid is not None else 'stopped'}"
+    print(f"{_label('상태')} {'실행 중' if pid is not None else '중지됨'}"
           + (f" (pid {pid})" if pid else ""))
-    print(f"launchd        : {launchd_line}")
-    print(f"api token      : {payload['token_source']}")
-    print(f"data dir       : {settings.data_dir}")
-    print(f"log dir        : {settings.log_dir}")
-    print(f"kakaotalk      : "
-          + ("running" if report["kakaotalk_running"] else
-             ("installed, not running" if report["kakaotalk_installed"] else "not installed")))
-    print(f"full disk access: {'ok' if report['full_disk_access_ok'] else 'missing'}")
+    print(f"{_label('launchd')} {launchd_line}")
+    print(f"{_label('API 토큰')} {payload['token_source']}")
+    print(f"{_label('데이터 디렉터리')} {settings.data_dir}")
+    print(f"{_label('로그 디렉터리')} {settings.log_dir}")
+    print(f"{_label('카카오톡')} "
+          + ("실행 중" if report["kakaotalk_running"] else
+             ("설치됨, 실행 중 아님" if report["kakaotalk_installed"] else "설치되지 않음")))
+    print(f"{_label('전체 디스크 접근')} {'정상' if report['full_disk_access_ok'] else '없음'}")
     ax = report["accessibility_trusted"]
-    print(f"accessibility  : {'ok' if ax else ('missing' if ax is False else 'unknown')}")
+    print(f"{_label('손쉬운 사용')} {'정상' if ax else ('없음' if ax is False else '알 수 없음')}")
     for line in diagnostics.permission_guidance(report):
         print()
         print(line)
@@ -368,9 +383,9 @@ def cmd_token(args: argparse.Namespace) -> int:
         try:
             subprocess.run(["pbcopy"], input=token.encode("utf-8"), check=True)
         except (OSError, subprocess.SubprocessError) as exc:
-            print(f"sesametok-backend: could not copy to clipboard: {exc}", file=sys.stderr)
+            print(f"sesametok-backend: 클립보드에 복사하지 못했습니다: {exc}", file=sys.stderr)
             return EXIT_FAILURE
-        print("API token copied to the clipboard.")
+        print("API 토큰을 클립보드에 복사했습니다.")
         return EXIT_OK
     print(token)
     return EXIT_OK
@@ -382,10 +397,10 @@ def cmd_logs(args: argparse.Namespace) -> int:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except FileNotFoundError:
-        print(f"no log file yet at {path}", file=sys.stderr)
+        print(f"아직 로그 파일이 없습니다: {path}", file=sys.stderr)
         return EXIT_FAILURE
     except OSError as exc:
-        print(f"sesametok-backend: could not read {path}: {exc}", file=sys.stderr)
+        print(f"sesametok-backend: {path}을(를) 읽지 못했습니다: {exc}", file=sys.stderr)
         return EXIT_FAILURE
     for line in lines[-args.lines :]:
         print(line)
@@ -401,77 +416,77 @@ def cmd_permissions(args: argparse.Namespace) -> int:
     try:
         subprocess.run(["open", url], check=True)
     except (OSError, subprocess.SubprocessError) as exc:
-        print(f"sesametok-backend: could not open System Settings: {exc}", file=sys.stderr)
+        print(f"sesametok-backend: 시스템 설정을 열지 못했습니다: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    print("Opened System Settings. Grant permission to:")
+    print("시스템 설정을 열었습니다. 다음 실행 파일에 권한을 부여하세요:")
     print(f"  {diagnostics.python_executable()}")
     return EXIT_OK
 
 
-def cmd_pending(args: argparse.Namespace) -> int:  # pragma: no cover - unreachable
-    print(f"{args.command}: no handler is registered", file=sys.stderr)
+def cmd_pending(args: argparse.Namespace) -> int:  # pragma: no cover - 도달 불가
+    print(f"{args.command}: 등록된 핸들러가 없습니다", file=sys.stderr)
     return EXIT_UNAVAILABLE
 
 
-# ----------------------------------------------------------------------- parser
+# --------------------------------------------------------------------------- 파서
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sesametok-backend",
-        description="Local-only KakaoTalk messaging backend (macOS, native).",
+        description="로컬 전용 카카오톡 메시징 백엔드 (macOS, 네이티브).",
     )
     parser.add_argument("--version", action="version", version=f"sesametok-backend {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    start = sub.add_parser("start", help="start the backend (survives closing the terminal)")
+    start = sub.add_parser("start", help="백엔드를 시작합니다 (터미널을 닫아도 유지됨)")
     start.set_defaults(handler=cmd_start)
 
-    stop = sub.add_parser("stop", help="stop the backend")
+    stop = sub.add_parser("stop", help="백엔드를 중지합니다")
     stop.set_defaults(handler=cmd_stop)
 
-    restart = sub.add_parser("restart", help="restart the backend")
+    restart = sub.add_parser("restart", help="백엔드를 재시작합니다")
     restart.set_defaults(handler=cmd_restart)
 
-    install = sub.add_parser("install", help="register the LaunchAgent (start at login)")
+    install = sub.add_parser("install", help="LaunchAgent를 등록합니다 (로그인 시 시작)")
     install.set_defaults(handler=cmd_install)
 
     uninstall = sub.add_parser(
-        "uninstall", help="unregister the LaunchAgent and stop the backend"
+        "uninstall", help="LaunchAgent를 해제하고 백엔드를 중지합니다"
     )
     uninstall.set_defaults(handler=cmd_uninstall)
 
-    foreground = sub.add_parser("foreground", help="development: run in this terminal")
+    foreground = sub.add_parser("foreground", help="개발용: 이 터미널에서 실행합니다")
     foreground.add_argument(
         "--managed",
         action="store_true",
-        help="running under launchd (stderr is a log file; never print secrets)",
+        help="launchd 아래에서 실행 중 (stderr가 로그 파일이므로 비밀 값을 절대 출력하지 않음)",
     )
     foreground.set_defaults(handler=cmd_foreground)
 
     archive_key = sub.add_parser(
-        "archive-key", help="show the archive encryption key for backup"
+        "archive-key", help="백업용 아카이브 암호화 키를 보여줍니다"
     )
     archive_key.add_argument(
-        "--force", action="store_true", help="print even when not attached to a terminal"
+        "--force", action="store_true", help="터미널에 연결되어 있지 않아도 출력합니다"
     )
     archive_key.set_defaults(handler=cmd_archive_key)
 
-    status = sub.add_parser("status", help="run/permission/polling state")
-    status.add_argument("--json", action="store_true", help="machine-readable output")
+    status = sub.add_parser("status", help="실행/권한/폴링 상태")
+    status.add_argument("--json", action="store_true", help="기계가 읽을 수 있는 출력")
     status.set_defaults(handler=cmd_status)
 
-    token = sub.add_parser("token", help="print the interface API token")
-    token.add_argument("--copy", action="store_true", help="copy it to the clipboard")
+    token = sub.add_parser("token", help="인터페이스 API 토큰을 출력합니다")
+    token.add_argument("--copy", action="store_true", help="클립보드에 복사합니다")
     token.set_defaults(handler=cmd_token)
 
-    logs = sub.add_parser("logs", help="tail the backend log")
-    logs.add_argument("-n", "--lines", type=int, default=50, help="number of lines")
+    logs = sub.add_parser("logs", help="백엔드 로그의 끝부분을 출력합니다")
+    logs.add_argument("-n", "--lines", type=int, default=50, help="줄 수")
     logs.set_defaults(handler=cmd_logs)
 
-    permissions = sub.add_parser("permissions", help="open the macOS permission pane")
+    permissions = sub.add_parser("permissions", help="macOS 권한 설정 창을 엽니다")
     permissions.add_argument(
-        "--accessibility", action="store_true", help="open Accessibility instead of Full Disk Access"
+        "--accessibility", action="store_true", help="전체 디스크 접근 권한 대신 손쉬운 사용을 엽니다"
     )
     permissions.set_defaults(handler=cmd_permissions)
 
@@ -485,5 +500,5 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return handler(args)
     except ConfigError as exc:
-        print(f"sesametok-backend: configuration error: {exc}", file=sys.stderr)
+        print(f"sesametok-backend: 설정 오류: {exc}", file=sys.stderr)
         return EXIT_CONFIG

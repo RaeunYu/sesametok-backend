@@ -1,8 +1,7 @@
-"""Guard tests for the Accessibility driver.
+"""손쉬운 사용 드라이버의 가드 테스트.
 
-The UI-driving paths need a real screen and permission; these tests cover the
-fail-closed behaviour and the focus policy with a fake framework, so they run
-headlessly.
+UI를 구동하는 경로에는 실제 화면과 권한이 필요하다. 이 테스트들은 실패 시 닫히는
+동작과 포커스 정책을 가짜 프레임워크로 다루므로 헤드리스로 실행된다.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ TARGET = SendTarget(chat_id="100", room_name="Team Room", rank=0, chat_type="gro
 
 
 class FakeFramework:
-    """The smallest surface the driver touches, with no macOS involved."""
+    """드라이버가 만지는 최소한의 표면. macOS는 전혀 관여하지 않는다."""
 
     HIDTap = "hid"
     CombinedState = "combined"
@@ -30,7 +29,7 @@ class FakeFramework:
         self.actions: list[tuple[int, str]] = []
         self.set_values: list[tuple[int, str, object]] = []
 
-    # --- framework API -------------------------------------------------
+    # --- 프레임워크 API ------------------------------------------------
     def AXIsProcessTrusted(self) -> bool:
         return self.trusted
 
@@ -102,7 +101,7 @@ def test_idle_gap_returns_immediately_when_quiet(monkeypatch) -> None:
     framework = FakeFramework(trusted=True, seconds_since_input=5.0)
     driver = _driver(monkeypatch, framework)
 
-    driver._wait_for_idle()  # must not raise
+    driver._wait_for_idle()  # 예외가 나면 안 된다
 
 
 def test_idle_gap_can_be_skipped(monkeypatch) -> None:
@@ -110,7 +109,7 @@ def test_idle_gap_can_be_skipped(monkeypatch) -> None:
     monkeypatch.setattr(ax, "IDLE_MAX_SECONDS", 0.01)
     driver = _driver(monkeypatch, framework)
 
-    driver._wait_for_idle(immediate=True)  # must not raise
+    driver._wait_for_idle(immediate=True)  # 예외가 나면 안 된다
 
 
 def test_background_only_refuses_to_open_a_closed_room(monkeypatch) -> None:
@@ -159,5 +158,5 @@ def test_cancel_posts_escape(monkeypatch) -> None:
 
     driver.cancel()
 
-    # Key down and key up.
+    # key down과 key up.
     assert framework.posted == [ax.KEY_ESC, ax.KEY_ESC]

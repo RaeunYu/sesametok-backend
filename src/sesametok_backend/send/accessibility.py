@@ -1,17 +1,15 @@
-"""Driving the real KakaoTalk window through macOS Accessibility.
+"""macOS 손쉬운 사용을 통해 실제 카카오톡 창을 구동한다.
 
-The essence of this module is *order and observation*: every step either observes
-the UI or posts a keystroke, and the moment a value does not hold what was
-written, the pipeline stops instead of acting on the wrong thing. Sending is
-irreversible, so the default is to refuse on ambiguity.
+이 모듈의 핵심은 *순서와 관찰*이다. 모든 단계는 UI를 관찰하거나 키 입력을
+보내며, 값이 기록한 내용을 그대로 유지하지 않으면 파이프라인은 잘못된 대상에
+동작하는 대신 멈춘다. 전송은 되돌릴 수 없으므로 기본값은 모호하면 거부하는 것이다.
 
-Status: the order, the gates, the timing constants, and the error codes are
-implemented as specified. Live verification requires Accessibility permission
-(currently granted to the interpreter that runs the backend) and a room the
-operator names; until that test runs, treat this file as unverified.
+상태: 순서, 게이트, 타이밍 상수, 오류 코드는 명세대로 구현되어 있다. 실제 검증에는
+손쉬운 사용 권한(현재 백엔드를 실행하는 인터프리터에 허용되어 있음)과 운영자가
+지정한 방이 필요하다. 그 테스트가 실행되기 전까지 이 파일은 미검증으로 간주한다.
 
-The module imports pyobjc lazily so the rest of the backend (and the test suite)
-works headlessly and on machines without a GUI session.
+이 모듈은 pyobjc를 지연 임포트하므로 나머지 백엔드(그리고 테스트 스위트)가 헤드리스
+환경과 GUI 세션이 없는 머신에서도 동작한다.
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ from .targets import SendTarget, room_matches, search_query, validate_room_name
 
 logger = logging.getLogger("sesametok_backend.send.accessibility")
 
-# ---------------------------------------------------------------------- constants
+# ---------------------------------------------------------------------- 상수
 
 IDLE_GAP_SECONDS = 0.7
 IDLE_MAX_SECONDS = 15.0
@@ -87,7 +85,7 @@ def _sleep(seconds: float) -> None:
 
 
 def _wait_for(predicate, attempts: int, interval: float):
-    """Poll *predicate* for up to ``attempts × interval`` seconds."""
+    """*predicate*를 ``attempts × interval``초까지 폴링한다."""
 
     for _ in range(max(1, attempts)):
         value = predicate()
@@ -98,7 +96,7 @@ def _wait_for(predicate, attempts: int, interval: float):
 
 
 def _load_frameworks() -> SimpleNamespace:
-    """Import the macOS frameworks, or fail with the permission error code."""
+    """macOS 프레임워크를 임포트하거나, 권한 오류 코드와 함께 실패한다."""
 
     try:
         import objc  # noqa: F401
@@ -125,10 +123,10 @@ def _load_frameworks() -> SimpleNamespace:
             kCGHIDEventTap,
             kCGEventSourceStateCombinedSessionState,
         )
-    except Exception as exc:  # pragma: no cover - depends on the machine
+    except Exception as exc:  # pragma: no cover - 기기에 따라 달라짐
         raise SendError(
             "accessibility_denied",
-            f"the macOS Accessibility frameworks are unavailable: {exc}",
+            f"macOS 손쉬운 사용 프레임워크를 사용할 수 없습니다: {exc}",
         ) from exc
 
     return SimpleNamespace(
@@ -182,7 +180,7 @@ def _element_center(framework: SimpleNamespace, element: Any) -> tuple[float, fl
 
 
 class KakaoTalkDriver:
-    """The single-threaded Accessibility driver."""
+    """단일 스레드로 동작하는 손쉬운 사용 드라이버."""
 
     def __init__(self, *, background_only: bool = False, curtain: Any = None) -> None:
         self.background_only = background_only
@@ -190,7 +188,7 @@ class KakaoTalkDriver:
         self.curtain = curtain
         self._pid: int | None = None
 
-    # ------------------------------------------------------------- preconditions
+    # ------------------------------------------------------------- 사전 조건
 
     def _require_permission(self) -> None:
         if not bool(self.framework.AXIsProcessTrusted()):
@@ -202,7 +200,7 @@ class KakaoTalkDriver:
                 ["pgrep", "-x", "KakaoTalk"], capture_output=True, text=True, timeout=5, check=False
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            raise SendError("not_running", f"could not run pgrep: {exc}") from exc
+            raise SendError("not_running", f"pgrep을 실행할 수 없습니다: {exc}") from exc
         pids = [line.strip() for line in result.stdout.splitlines() if line.strip().isdigit()]
         if not pids:
             raise KakaoTalkNotRunning()
@@ -213,7 +211,7 @@ class KakaoTalkDriver:
         assert self._pid is not None
         return self.framework.CreateApp(self._pid)
 
-    # ------------------------------------------------------------------- windows
+    # ------------------------------------------------------------------- 창
 
     def _windows(self, app) -> list[WindowInfo]:
         raw = _attr(self.framework, app, "AXWindows") or []
@@ -227,7 +225,7 @@ class KakaoTalkDriver:
         return [window for window in self._windows(app) if room_matches(window.title, wanted)]
 
     def find_window(self, target: SendTarget):
-        """Resolve exactly one window for *target* or refuse (never guess)."""
+        """*target*에 대해 창을 정확히 하나로 확정하거나 거부한다(추측하지 않는다)."""
 
         validate_room_name(target.room_name)
         app = self._app_element()
@@ -247,7 +245,7 @@ class KakaoTalkDriver:
         return self._open_room(app, target)
 
     def _open_room(self, app, target: SendTarget):
-        """Try to open the room via search, then the chat list."""
+        """검색을 먼저 시도하고, 그다음 채팅 목록으로 방을 열어 본다."""
 
         open_titles = ", ".join(w.title for w in self._windows(app))
         last_error: SendError | None = None
@@ -262,7 +260,7 @@ class KakaoTalkDriver:
                     return self._wait_for_single_window(app, target)
             except SendError as exc:
                 if exc.code in ("ambiguous_room", "room_name_not_typable", "chat_list_moved"):
-                    raise  # never retry an ambiguity
+                    raise  # 모호함은 절대 재시도하지 않는다
                 last_error = exc
             _sleep(0.1)
 
@@ -343,8 +341,8 @@ class KakaoTalkDriver:
             raise SendError("ambiguous_room", room=target.room_name, count=len(matching))
 
         position, row, title = matching[0]
-        # Re-read the row we are about to click: a reorder means the click would
-        # land on whichever room took that position.
+        # 클릭할 행을 다시 읽는다. 순서가 바뀌었다면 클릭은 그 자리를 차지한
+        # 방에 들어갔을 것이다.
         current = self._rows(app)
         if len(current) <= position or not room_matches(self._row_title(current[position]) or "", title):
             raise SendError("chat_list_moved", room=target.room_name)
@@ -370,10 +368,10 @@ class KakaoTalkDriver:
                     return value
         return None
 
-    # ---------------------------------------------------------------- elements
+    # ---------------------------------------------------------------- 요소
 
     def _find_compose_box(self, window):
-        """``AXScrollArea > AXTextArea`` inside the window."""
+        """창 안의 ``AXScrollArea > AXTextArea``."""
 
         parent_roles: dict[int, str] = {}
         text_areas: list[Any] = []
@@ -422,7 +420,7 @@ class KakaoTalkDriver:
     def _raise(self, element) -> None:
         self.framework.PerformAction(element, "AXRaise")
 
-    # ---------------------------------------------------------------- input
+    # ---------------------------------------------------------------- 입력
 
     def _post_key(self, keycode: int, *, flags: int = 0) -> None:
         down = self.framework.KeyEvent(None, keycode, True)
@@ -453,7 +451,7 @@ class KakaoTalkDriver:
             self.framework.SecondsSinceLastEvent(self.framework.CombinedState, 0xFFFFFFFF)
         )
 
-    # ------------------------------------------------------------- focus policy
+    # ------------------------------------------------------------- 포커스 정책
 
     def _wait_for_idle(self, *, immediate: bool = False) -> None:
         if immediate:
@@ -466,12 +464,12 @@ class KakaoTalkDriver:
         raise SendError("user_busy", n=int(IDLE_MAX_SECONDS))
 
     def _activate(self, app) -> None:
-        """Bring KakaoTalk forward and verify it stayed frontmost."""
+        """카카오톡을 앞으로 가져오고, 최전면에 머물렀는지 확인한다."""
 
-        self.framework.NSWorkspace.sharedWorkspace()  # keep the framework warm
+        self.framework.NSWorkspace.sharedWorkspace()  # 프레임워크를 따뜻하게 유지한다
         activate = getattr(self.framework.NSApplication, "sharedApplication", None)
         if activate is not None:
-            # Best effort: raise the app via Accessibility, then verify.
+            # 최선의 노력: 손쉬운 사용으로 앱을 올린 뒤 확인한다.
             self.framework.PerformAction(app, "AXRaise")
         for _ in range(FRONTMOST_RETRIES):
             _sleep(FRONTMOST_RETRY_DELAY)
@@ -485,7 +483,7 @@ class KakaoTalkDriver:
 
         return bool(_wait_for(check, FRONTMOST_CHECKS, FRONTMOST_INTERVAL))
 
-    # ------------------------------------------------------------ public API
+    # ------------------------------------------------------------ 공개 API
 
     def send_text(
         self,
@@ -536,7 +534,7 @@ class KakaoTalkDriver:
                 str(SendError("background_send_not_accepted")),
             )
 
-        # Visible path: take focus only now, then observe.
+        # 보이는 경로: 이제야 포커스를 가져간 뒤 관찰한다.
         if self._send_visible(self._app_element(), window, compose, text):
             return SendOutcome("sent")
         return SendOutcome("unconfirmed", "not_sent", str(SendError("not_sent")))
@@ -545,11 +543,11 @@ class KakaoTalkDriver:
         return _wait_for(lambda: self._value(compose) == "", *COMPOSE_DRAIN) is not None
 
     def _send_visible(self, app, window, compose, text: str) -> bool:
-        """Steps 14–17: wait for idle, take the screen, then Enter / click Send.
+        """14~17단계: 입력이 멈추기를 기다린 뒤 화면을 가져가고 Enter / 전송 클릭.
 
-        The input curtain is raised first when available. If it cannot be
-        displayed we continue **unblocked** (the documented fallback) but keep
-        every frontmost check in place; blocking invisibly is never allowed.
+        입력 커튼을 사용할 수 있으면 먼저 올린다. 커튼을 표시할 수 없으면
+        **차단 없이** 계속 진행하되(문서화된 폴백) 모든 최전면 검사는 그대로
+        유지한다. 보이지 않게 차단하는 것은 결코 허용되지 않는다.
         """
 
         shown = self._raise_curtain()
@@ -557,19 +555,19 @@ class KakaoTalkDriver:
             self._wait_for_idle()
             if self._curtain_cancelled():
                 raise SendError("cancelled")
-            self._activate(app)          # step 14
-            self._raise(window)          # step 15
+            self._activate(app)          # 14단계
+            self._raise(window)          # 15단계
             _sleep(RAISE_DELAY)
             self._set_focus(compose)
             if self._value(compose) != text:
-                raise SendError("value_mismatch", what="the compose box")
+                raise SendError("value_mismatch", what="입력 상자")
 
-            self._post_key(KEY_ENTER)    # step 16
+            self._post_key(KEY_ENTER)    # 16단계
             if self._compose_emptied(compose):
                 return True
 
             button = self._find_button(window, SEND_BUTTON_TITLES)
-            if button is not None:       # step 17
+            if button is not None:       # 17단계
                 center = _element_center(self.framework, button)
                 if center is not None:
                     self._click(*center)
@@ -586,10 +584,10 @@ class KakaoTalkDriver:
         try:
             shown = bool(self.curtain.show())
         except Exception as exc:
-            logger.warning("curtain show failed (%s); continuing unblocked", type(exc).__name__)
+            logger.warning("커튼을 표시하지 못했습니다(%s). 차단 없이 계속합니다", type(exc).__name__)
             return False
         if not shown:
-            logger.warning("curtain was not acknowledged; continuing unblocked")
+            logger.warning("커튼 표시가 확인되지 않았습니다. 차단 없이 계속합니다")
         return shown
 
     def _curtain_cancelled(self) -> bool:
@@ -609,11 +607,11 @@ class KakaoTalkDriver:
             post(self.framework.HIDTap, event)
 
     def _stage_draft(self, window, compose, target: SendTarget, text: str) -> None:
-        """A draft must never use ``AXValue``: writing it can itself send."""
+        """임시 내용 작성에는 절대 ``AXValue``를 쓰면 안 된다: 쓰는 것 자체가 전송일 수 있다."""
 
         if self.background_only:
-            # Staging a draft pastes into the frontmost app, which background-only
-            # mode forbids.
+            # 임시 내용 작성은 최전면 앱에 붙여넣는 것이므로 백그라운드 전용
+            # 모드에서는 금지된다.
             raise SendError("background_only_unsupported")
         if self._value(compose) not in ("", None):
             raise SendError("background_compose_not_empty", room=target.room_name)
@@ -626,7 +624,7 @@ class KakaoTalkDriver:
         pasteboard = self.framework.NSPasteboard.generalPasteboard()
         pasteboard.clearContents()
         pasteboard.setString_forType_(text, self.framework.NSPasteboardTypeString)
-        # Never post Cmd+V without re-confirming frontmost.
+        # 최전면을 다시 확인하지 않고 Cmd+V를 보내는 일은 없다.
         self._wait_for_idle()
         app = self._app_element()
         if not self._frontmost(app):
@@ -641,7 +639,7 @@ class KakaoTalkDriver:
         uti = IMAGE_UTIS.get(extension)
         if uti is None or not path.is_file():
             raise SendError(
-                "bad_request", f"unsupported image type {extension!r}"
+                "bad_request", f"지원하지 않는 이미지 형식입니다 {extension!r}"
             )
         self._require_permission()
         self._require_running()
@@ -658,11 +656,11 @@ class KakaoTalkDriver:
 
         image = NSImage.alloc().initWithContentsOfFile_(str(path))
         if image is None:
-            raise SendError("bad_request", "the image file could not be read")
+            raise SendError("bad_request", "이미지 파일을 읽을 수 없습니다")
         pasteboard.writeObjects_([image])
 
         if background_only:
-            # Pasting an image needs a global Cmd+V into the frontmost app.
+            # 이미지 붙여넣기는 최전면 앱으로 전역 Cmd+V를 보내야 한다.
             raise SendError("background_only_unsupported")
 
         self._wait_for_idle()
@@ -685,7 +683,7 @@ class KakaoTalkDriver:
                 self.curtain.hide()
 
     def _confirm_image_send(self, window) -> bool:
-        from ..core.send_queue import SendOutcome  # noqa: F401 - consistency
+        from ..core.send_queue import SendOutcome  # noqa: F401 - 일관성을 위해
 
         def confirmed() -> bool:
             sheet = self._find_role(window, "AXSheet", depth_limit=4)
@@ -713,6 +711,6 @@ class KakaoTalkDriver:
         return None
 
     def cancel(self) -> None:
-        """Cancel an in-flight visible send (Esc is only valid once shown)."""
+        """진행 중인 보이는 전송을 취소한다(Esc는 화면에 표시된 뒤에만 유효하다)."""
 
         self._post_key(KEY_ESC)

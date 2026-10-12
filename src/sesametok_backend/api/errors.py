@@ -1,7 +1,7 @@
-"""Stable API errors.
+"""안정적인 API 오류.
 
-Every failure is a JSON body ``{"error": {"code", "message", "retryable"}}`` with
-an HTTP status.
+모든 실패는 HTTP 상태 코드와 함께 ``{"error": {"code", "message", "retryable"}}``
+형태의 JSON 본문으로 나간다.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ class ApiError(Exception):
     message: str
     retryable: bool = False
 
-    def __str__(self) -> str:  # pragma: no cover - debugging aid
+    def __str__(self) -> str:  # pragma: no cover - 디버깅 보조
         return f"{self.status} {self.code}: {self.message}"
 
     def to_payload(self) -> dict:
@@ -33,7 +33,7 @@ def bad_request(message: str, code: str = "bad_request") -> ApiError:
     return ApiError(400, code, message)
 
 
-def unauthorized(message: str = "missing or invalid bearer token") -> ApiError:
+def unauthorized(message: str = "Bearer 토큰이 없거나 올바르지 않습니다") -> ApiError:
     return ApiError(401, "unauthorized", message)
 
 
@@ -45,7 +45,7 @@ def conflict(message: str, code: str) -> ApiError:
     return ApiError(409, code, message)
 
 
-def payload_too_large(message: str = "request body is too large") -> ApiError:
+def payload_too_large(message: str = "요청 본문이 너무 큽니다") -> ApiError:
     return ApiError(413, "payload_too_large", message)
 
 
@@ -53,5 +53,5 @@ def not_implemented(message: str, code: str = "not_implemented") -> ApiError:
     return ApiError(501, code, message)
 
 
-def internal(message: str = "internal error") -> ApiError:
+def internal(message: str = "내부 오류") -> ApiError:
     return ApiError(500, "internal_error", message, retryable=True)

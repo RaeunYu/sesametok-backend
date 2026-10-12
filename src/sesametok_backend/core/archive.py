@@ -1,13 +1,13 @@
-"""The encrypted local archive.
+"""암호화된 로컬 아카이브.
 
-This SQLite file is owned entirely by this project — never the KakaoTalk one. It
-is encrypted with SQLCipher (ADR-004) using a 32-byte key passed as a raw-key
-literal (``x'<hex>'``), which is the correct form for a *random* key. The
-KakaoTalk read path instead passes a derived passphrase (see ``kakao/cipher.py``).
+이 SQLite 파일은 전적으로 이 프로젝트가 소유하며, 카카오톡 것이 아니다.
+SQLCipher(ADR-004)로 암호화하고 32바이트 키를 로우 키 리터럴(``x'<hex>'``)로
+전달한다. 이는 *랜덤* 키에 맞는 형식이다. 카카오톡 읽기 경로는 대신 유도된
+패스프레이즈를 넘긴다(``kakao/cipher.py`` 참고).
 
-The schema is defined here; ADR-003 adds ``original_message_type`` and
-``is_placeholder``. Writes belong to the poller and
-the send worker; the API only reads.
+스키마는 여기서 정의한다. ADR-003이 ``original_message_type`` 과
+``is_placeholder`` 를 추가한다. 쓰기는 폴러와 발신 워커가 담당하며, API는
+읽기만 한다.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ CHUNK = 400
 DEFAULT_PAGE_LIMIT = 100
 MAX_PAGE_LIMIT = 1000
 
-# Column order must match Message.fingerprint() exactly.
+# 컬럼 순서는 Message.fingerprint()와 정확히 일치해야 한다.
 FINGERPRINT_COLUMNS = (
     "chat_name",
     "chat_type",
@@ -156,10 +156,10 @@ def row_to_message(row: Sequence) -> Message:
 
 
 class Archive:
-    """One connection to the encrypted archive.
+    """암호화된 아카이브에 대한 연결 하나.
 
-    ``Archive`` instances are not shared between threads: each thread opens its
-    own connection. WAL mode lets the API read while the poller writes.
+    ``Archive`` 인스턴스는 스레드 간에 공유하지 않는다. 각 스레드가 자신의 연결을
+    연다. WAL 모드 덕분에 폴러가 쓰는 동안 API가 읽을 수 있다.
     """
 
     def __init__(self, connection, *, account_hash: str, path: Path) -> None:
@@ -167,7 +167,7 @@ class Archive:
         self.account_hash = account_hash
         self.path = path
 
-    # ------------------------------------------------------------- lifecycle
+    # ------------------------------------------------------------- 생명주기
 
     @classmethod
     def open(
@@ -178,10 +178,10 @@ class Archive:
         account_hash: str,
         initialize: bool = True,
     ) -> "Archive":
-        """Open the archive. ``initialize=False`` skips schema/WAL setup.
+        """아카이브를 연다. ``initialize=False`` 면 스키마/WAL 설정을 건너뛴다.
 
-        Every thread opens its own connection; only the poller and the send worker
-        write. The database file must already exist when ``initialize`` is False.
+        모든 스레드가 자신의 연결을 연다. 쓰기는 폴러와 발신 워커만 한다.
+        ``initialize`` 가 False면 데이터베이스 파일이 이미 존재해야 한다.
         """
 
         path = settings.archive_path
@@ -200,13 +200,13 @@ class Archive:
     def close(self) -> None:
         try:
             self._con.close()
-        except sqlcipher.Error:  # pragma: no cover - close is best effort
+        except sqlcipher.Error:  # pragma: no cover - 닫기는 최선 노력이다
             pass
 
     def commit(self) -> None:
         self._con.commit()
 
-    # ------------------------------------------------------------------ rooms
+    # ------------------------------------------------------------------ 방
 
     def _existing_room_fingerprints(self) -> dict[str, tuple]:
         rows = self._con.execute("SELECT chat_id, chat_name, chat_type FROM chats").fetchall()
@@ -278,7 +278,7 @@ class Archive:
     def count_rooms(self) -> int:
         return int(self._con.execute("SELECT count(*) FROM chats").fetchone()[0])
 
-    # --------------------------------------------------------------- messages
+    # --------------------------------------------------------------- 메시지
 
     def existing_fingerprints(
         self, messages: Sequence[Message]
@@ -301,7 +301,7 @@ class Archive:
         return result
 
     def apply_message_diff(self, messages: Sequence[Message]) -> MessageDiff:
-        """Insert new messages and update changed ones. Returns what changed."""
+        """새 메시지를 삽입하고 변경된 메시지를 갱신한다. 변경된 내용을 반환한다."""
 
         if not messages:
             return MessageDiff()
@@ -373,10 +373,10 @@ class Archive:
         limit: int = DEFAULT_PAGE_LIMIT,
         before: str | None = None,
     ) -> MessagesPage:
-        """Newest page first, returned oldest-to-newest inside the page.
+        """가장 최신 페이지부터. 페이지 안에서는 오래된 것에서 최신 순으로 반환한다.
 
-        ``before`` walks further into the past; ``next_before`` is the cursor for
-        the following older page.
+        ``before`` 는 과거로 더 거슬러 올라가며, ``next_before`` 는 그다음 오래된
+        페이지를 위한 커서다.
         """
 
         bounded = max(1, min(limit, MAX_PAGE_LIMIT))
@@ -424,7 +424,7 @@ class Archive:
         ).fetchone()
         return None if row is None else row_to_message(row)
 
-    # ----------------------------------------------------------------- events
+    # ----------------------------------------------------------------- 이벤트
 
     def append_event(self, kind: str, payload: dict, *, created_at: str | None = None) -> Event:
         moment = created_at or now_utc()
@@ -463,7 +463,7 @@ class Archive:
         return int(row[0])
 
     def prune_events(self, *, days: int, max_count: int, now: str | None = None) -> int:
-        """Drop events older than *days* or beyond the newest *max_count*."""
+        """*days* 보다 오래되었거나 최신 *max_count* 를 넘어선 이벤트를 삭제한다."""
 
         removed = 0
         if days > 0:
@@ -485,7 +485,7 @@ class Archive:
         self.commit()
         return removed
 
-    # ------------------------------------------------------------- poll state
+    # ------------------------------------------------------------- 폴링 상태
 
     def poll_cursor(self) -> int | None:
         row = self._con.execute("SELECT cursor FROM poll_state WHERE id = 1").fetchone()
@@ -508,7 +508,7 @@ class Archive:
             (str(cursor), last_success_at),
         )
 
-    # -------------------------------------------------------------- webhooks
+    # -------------------------------------------------------------- 웹훅
 
     def add_webhook(self, *, webhook_id: str, url: str, secret: str, kinds: Sequence[str]) -> dict:
         self._con.execute(
@@ -574,7 +574,7 @@ class Archive:
                 "UPDATE webhooks SET last_error = ? WHERE id = ?", (error, webhook_id)
             )
 
-    # ---------------------------------------------------------- send requests
+    # ---------------------------------------------------------- 발신 요청
 
     def get_send_request(self, client_request_id: str) -> dict | None:
         row = self._con.execute(

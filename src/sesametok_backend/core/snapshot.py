@@ -1,8 +1,7 @@
-"""Fingerprint diffing — the pure logic behind ``message.created``/``message.updated``.
+"""fingerprint diff — ``message.created``/``message.updated`` 뒤의 순수 로직.
 
-Kept free of SQLite and KakaoTalk so the rules can be tested directly: a key
-that was absent becomes ``created``, a changed fingerprint becomes ``updated``,
-everything else is silent.
+SQLite와 카카오톡에 의존하지 않게 유지하여 규칙을 직접 테스트할 수 있다. 없던
+키는 ``created``, fingerprint가 바뀌면 ``updated``, 그 외에는 아무 일도 없다.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ def diff_messages(
     existing: Mapping[ChatMessageKey, tuple],
     messages: Sequence[Message],
 ) -> MessageDiff:
-    """Classify *messages* against the stored fingerprints in *existing*."""
+    """*messages* 를 *existing* 에 저장된 fingerprint와 대조해 분류한다."""
 
     created: list[Message] = []
     updated: list[Message] = []
@@ -49,7 +48,7 @@ def diff_messages(
     for message in messages:
         key = message_key(message)
         if key in seen:
-            continue  # first sighting wins, matching the reader's dedupe rule
+            continue  # 리더의 중복 제거 규칙과 동일하게 첫 목격이 이긴다
         seen.add(key)
 
         previous = existing.get(key)
@@ -68,7 +67,7 @@ def room_fingerprint(room: Room) -> tuple[str, str]:
 
 
 def diff_rooms(existing: Mapping[str, tuple], rooms: Sequence[Room]) -> RoomDiff:
-    """Rooms whose name or type differs from the archived value."""
+    """이름이나 타입이 아카이브된 값과 다른 방들."""
 
     changed: list[Room] = []
     seen: set[str] = set()

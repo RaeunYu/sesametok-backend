@@ -1,15 +1,15 @@
-"""The single backend process.
+"""단일 백엔드 프로세스.
 
-``Runtime`` owns process-level concerns and assembles the pipeline:
+``Runtime``은 프로세스 수준의 관심사를 소유하고 파이프라인을 조립한다:
 
-    identity + key  →  encrypted archive  →  poller (thread B)  →  event bus
-                                             ↓
-                                  webhooks, send worker, API
+    식별 정보 + 키  →  암호화 아카이브  →  폴러(스레드 B)  →  이벤트 버스
+                                              ↓
+                                   웹훅, 발신 워커, API
 
-Shutdown is ordered and idempotent: hooks run in reverse registration order, so
-the API stops first, then the send worker drains, then webhooks, and the poller
-stops last. Every service except the poller is skipped when ``settings.api_enabled``
-is false (``SESAMETOK_API=0``), which is how tests and headless CI run.
+종료는 순서가 있고 멱등적이다: 훅이 등록의 역순으로 실행되므로 API가 먼저 멈추고,
+그다음 발신 워커가 비워지고, 그다음 웹훅이 멈추며, 폴러가 마지막에 멈춘다.
+``settings.api_enabled``가 false(``SESAMETOK_API=0``)이면 폴러를 제외한 모든
+서비스를 건너뛰며, 테스트와 헤드리스 CI가 이렇게 실행된다.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from .security.archive_key import (
 )
 from .security.tokens import load_or_create_token
 
-if TYPE_CHECKING:  # pragma: no cover - typing only, avoids importing the API eagerly
+if TYPE_CHECKING:  # pragma: no cover - 타입 검사 전용이며, API를 미리 임포트하지 않는다
     from .api.server import ApiService
     from .api.webhooks import WebhookDispatcher
     from .core.send_queue import SendQueue
@@ -50,11 +50,11 @@ logger = logging.getLogger("sesametok_backend.runtime")
 
 
 class AlreadyRunningError(RuntimeError):
-    """Raised when another live backend process holds the instance lock."""
+    """다른 살아 있는 백엔드 프로세스가 인스턴스 잠금을 쥐고 있을 때 발생한다."""
 
 
 class StartupError(RuntimeError):
-    """Raised when the backend cannot start (identity, key, or archive)."""
+    """백엔드가 시작할 수 없을 때(식별 정보, 키, 아카이브) 발생한다."""
 
 
 @dataclass
@@ -62,7 +62,7 @@ class Runtime:
     settings: Settings
     foreground: bool = True
     managed: bool = False
-    """True when launched by launchd, where stderr becomes a log file."""
+    """launchd가 실행한 경우 True이며, 이때 stderr는 로그 파일이 된다."""
 
     interactive: bool | None = None
     api_token: str | None = None
@@ -70,8 +70,8 @@ class Runtime:
     identity: AccountIdentity | None = None
     account_hash: str | None = None
     archive_key_source: str | None = None
-    # Injectable seams: production builds the real KakaoTalk source and resolvers;
-    # tests substitute quiet ones so no test touches the real installation.
+    # 주입 가능한 이음매: 프로덕션은 실제 카카오톡 소스와 리졸버를 만들고,
+    # 테스트는 조용한 것으로 대체하므로 어떤 테스트도 실제 설치를 건드리지 않는다.
     source: PollSource | None = None
     identity_resolver: Callable[[Settings], AccountIdentity] | None = None
     archive_key_resolver: Callable[[Settings], ArchiveKey] | None = None
@@ -79,8 +79,8 @@ class Runtime:
     _stop: threading.Event = field(init=False, default_factory=threading.Event)
     _started: bool = field(init=False, default=False)
     _shutdown_hooks: list[Callable[[], None]] = field(init=False, default_factory=list)
-    # Serializes concurrent shutdown() calls: the menu bar stops the run loop from
-    # a background thread while run_foreground's finally may also call shutdown().
+    # 동시 shutdown() 호출을 직렬화한다: 메뉴 바가 백그라운드 스레드에서 실행 루프를
+    # 멈추는 동안 run_foreground의 finally도 shutdown()을 호출할 수 있다.
     _shutdown_lock: threading.RLock = field(init=False, default_factory=threading.RLock)
     _archive_key: bytes | None = field(init=False, default=None)
     _bus: EventBus = field(init=False, default_factory=EventBus)
@@ -94,7 +94,7 @@ class Runtime:
         if self.interactive is None:
             self.interactive = bool(sys.stderr.isatty()) and not self.managed
 
-    # --------------------------------------------------------------- lifecycle
+    # -------------------------------------------------------------------- 수명주기
 
     def add_shutdown_hook(self, hook: Callable[[], None]) -> None:
         self._shutdown_hooks.append(hook)
@@ -117,16 +117,16 @@ class Runtime:
 
     @property
     def sending(self) -> bool:
-        """True while one send is in flight (drives ``Status.sending``)."""
+        """발신 하나가 진행 중인 동안 True (``Status.sending``을 구동한다)."""
 
         return bool(self._send_queue is not None and self._send_queue.stats.in_flight)
 
     def archive_factory(self) -> Callable[[], Archive]:
-        """A factory for per-thread read connections (API workers)."""
+        """스레드별 읽기 연결을 위한 팩터리 (API 워커)."""
 
         def factory() -> Archive:
             if self._archive_key is None or self.account_hash is None:
-                raise StartupError("the archive is not ready")
+                raise StartupError("아카이브가 준비되지 않았습니다")
             return Archive.open(
                 self.settings,
                 self._archive_key,
@@ -144,7 +144,7 @@ class Runtime:
         if not self._lock.acquire():
             owner = self._lock.owner_pid()
             detail = f" (pid {owner})" if owner else ""
-            raise AlreadyRunningError(f"another sesametok-backend is already running{detail}")
+            raise AlreadyRunningError(f"다른 sesametok-backend가 이미 실행 중입니다{detail}")
 
         try:
             self.api_token = load_or_create_token(self.settings)
@@ -162,9 +162,9 @@ class Runtime:
             raise
 
         self._started = True
-        logger.info("sesametok-backend %s starting", _version())
-        logger.info("config %s", self.settings.redacted())
-        logger.info("account resolved via %s; archive key via %s",
+        logger.info("sesametok-backend %s 시작 중", _version())
+        logger.info("설정 %s", self.settings.redacted())
+        logger.info("계정 출처 %s; 아카이브 키 출처 %s",
                     self.identity.source if self.identity else "?",
                     self.archive_key_source)
 
@@ -178,8 +178,8 @@ class Runtime:
             resolved: ArchiveKey = resolver(self.settings)
         except ArchiveKeyError as exc:
             raise StartupError(
-                f"{exc}\nSet SESAMETOK_ARCHIVE_KEY, or allow access to the login "
-                "keychain, then retry."
+                f"{exc}\nSESAMETOK_ARCHIVE_KEY를 설정하거나 로그인 키체인 접근을 "
+                "허용한 뒤 다시 시도하세요."
             ) from exc
 
         self._archive_key = resolved.key
@@ -189,18 +189,18 @@ class Runtime:
 
     def _announce_new_archive_key(self, resolved: ArchiveKey) -> None:
         message = [
-            "A new archive key was generated and stored in the login keychain.",
+            "새 아카이브 키를 만들어 로그인 키체인에 저장했습니다.",
             KEY_BACKUP_HELP,
         ]
         for line in message:
             logger.warning("%s", line)
-        # Never print the key when stderr is a launchd log file.
+        # stderr가 launchd 로그 파일일 때는 키를 절대 출력하지 않는다.
         if self.interactive:
             print(
-                "\n  archive key: "
+                "\n  아카이브 키: "
                 + key_to_hex(resolved.key)
-                + "\n  Save it now; it is shown here only because this is an "
-                "interactive first run.\n",
+                + "\n  지금 저장하세요; 대화형 첫 실행이기 때문에 여기서만 "
+                "보여줍니다.\n",
                 file=sys.stderr,
             )
 
@@ -216,9 +216,9 @@ class Runtime:
                 )
         except Exception as exc:
             raise StartupError(
-                "could not determine the KakaoTalk account: "
-                f"{exc}\nSet SESAMETOK_USER_ID to the account's numeric user id "
-                "and retry."
+                "카카오톡 계정을 확인하지 못했습니다: "
+                f"{exc}\nSESAMETOK_USER_ID를 계정의 숫자 user id로 설정하고 "
+                "다시 시도하세요."
             ) from exc
         self.identity = identity
         self.account_hash = derive_account_hash(identity.user_id)
@@ -230,7 +230,7 @@ class Runtime:
         )
         try:
             logger.info(
-                "archive ready: %d rooms, %d messages, %d events",
+                "아카이브 준비 완료: 방 %d개, 메시지 %d개, 이벤트 %d개",
                 archive.count_rooms(),
                 archive.count_messages(),
                 archive.latest_seq(),
@@ -252,7 +252,7 @@ class Runtime:
         self._poller.join(timeout=10)
         self._poller = None
 
-    # ------------------------------------------------------ webhooks / sending
+    # ----------------------------------------------------------------- 웹훅 / 발신
 
     def _start_webhooks(self) -> None:
         from .api.webhooks import WebhookDispatcher
@@ -269,11 +269,11 @@ class Runtime:
         self._webhooks = None
 
     def _start_send_worker(self) -> None:
-        """Build the send worker, but never let a missing UI driver block startup.
+        """발신 워커를 만들되, UI 드라이버가 없어도 시작을 막지 않는다.
 
-        ``SendQueue`` starts lazily on its first ``submit()``; the Accessibility
-        driver is constructed eagerly only to fail fast if the frameworks are
-        unavailable, and a failure just disables sending.
+        ``SendQueue``는 첫 ``submit()``에서 지연 시작한다; 손쉬운 사용 드라이버는
+        프레임워크를 쓸 수 없을 때 빨리 실패하도록 미리 만들 뿐이고, 실패하면
+        발신이 비활성화될 뿐이다.
         """
 
         from .core.send_queue import SendQueue
@@ -284,7 +284,7 @@ class Runtime:
 
             sender = KakaoTalkDriver(curtain=Curtain())
         except Exception as exc:
-            logger.warning("sending disabled: %s", type(exc).__name__)
+            logger.warning("발신 비활성화됨: %s", type(exc).__name__)
             return
         self._send_queue = SendQueue(self.settings, self.archive_factory(), self._bus, sender)
         self.add_shutdown_hook(self._stop_send_worker)
@@ -294,7 +294,7 @@ class Runtime:
         if queue is None:
             return
         queue.stop()
-        # Never joined before it started: SendQueue starts on its first submit().
+        # 시작한 적이 없으면 join하지 않는다: SendQueue는 첫 submit()에서 시작한다.
         if queue.is_alive():
             queue.join(timeout=10)
         self._send_queue = None
@@ -328,7 +328,7 @@ class Runtime:
         self._api = None
 
     def _status_extra(self) -> dict:
-        """Extra ``GET /v1/status`` fields, redacted (no ids, keys, or tokens)."""
+        """``GET /v1/status``에 추가되는 필드이며, 민감 정보를 제거했다 (id, 키, 토큰 없음)."""
 
         identity = self.identity
         account: dict[str, object] = {"source": identity.source if identity else None}
@@ -342,7 +342,7 @@ class Runtime:
         }
 
     def _webhook_count(self) -> dict:
-        """Subscription counts for ``/v1/status``; no URLs or secrets."""
+        """``/v1/status``용 구독 개수이며, URL이나 비밀 값은 없다."""
 
         try:
             archive = self.archive_factory()()
@@ -365,10 +365,10 @@ class Runtime:
         return self._stop.wait(timeout)
 
     def shutdown(self) -> None:
-        """Stop every service once, in reverse registration order.
+        """등록의 역순으로 모든 서비스를 한 번씩 멈춘다.
 
-        Idempotent and safe to call from any thread; a second concurrent caller
-        waits for the first teardown to finish and then does nothing.
+        멱등적이고 어느 스레드에서 호출해도 안전하다; 두 번째 동시 호출자는 첫
+        정리가 끝나기를 기다린 뒤 아무것도 하지 않는다.
         """
 
         with self._shutdown_lock:
@@ -379,18 +379,18 @@ class Runtime:
                 try:
                     hook()
                 except Exception:
-                    logger.exception("shutdown hook failed")
+                    logger.exception("종료 훅이 실패했습니다")
             if self._started:
-                logger.info("sesametok-backend stopped")
+                logger.info("sesametok-backend가 중지되었습니다")
             self._lock.release()
             self._started = False
 
-    # ---------------------------------------------------------------- runners
+    # -------------------------------------------------------------------- 실행기
 
     def run_foreground(self, install_signal_handlers: bool = True) -> int:
-        # Install handlers first: a slow first-run identity lookup (the reverse
-        # search can take ~60s) must still be interruptible, and a signal during
-        # startup must not leave a half-initialized archive behind.
+        # 핸들러를 먼저 설치한다: 느린 첫 실행 식별 조회(역방향 검색은 ~60초 걸릴 수
+        # 있다)도 여전히 중단할 수 있어야 하고, 시작 중의 시그널이 반쯤 초기화된
+        # 아카이브를 남겨서는 안 된다.
         if install_signal_handlers:
             self._install_signal_handlers()
         self.start()
@@ -400,16 +400,16 @@ class Runtime:
             else:
                 self._wait_plain()
         except KeyboardInterrupt:
-            logger.info("interrupted")
+            logger.info("중단되었습니다")
         finally:
             self.shutdown()
         return 0
 
     def _menubar_enabled(self) -> bool:
-        """True when this process should own the AppKit menu bar.
+        """이 프로세스가 AppKit 메뉴 바를 소유해야 하면 True.
 
-        AppKit is main-thread only, and tests/CI run
-        headless via ``SESAMETOK_NO_MENUBAR=1``.
+        AppKit은 메인 스레드 전용이며, 테스트/CI는 ``SESAMETOK_NO_MENUBAR=1``로
+        헤드리스 실행한다.
         """
 
         return (
@@ -418,12 +418,12 @@ class Runtime:
         )
 
     def _run_menubar(self) -> None:
-        """Run the PyObjC menu bar run loop (a no-op wait when AppKit is absent)."""
+        """PyObjC 메뉴 바 실행 루프를 돌린다 (AppKit이 없으면 아무것도 하지 않고 기다린다)."""
 
         try:
             from .app.menubar import run_menubar
         except ImportError as exc:
-            logger.error("menu bar unavailable (%s); running headless", exc)
+            logger.error("메뉴 바를 쓸 수 없습니다 (%s); 헤드리스로 실행합니다", exc)
             self._wait_plain()
             return
         run_menubar(
@@ -434,10 +434,10 @@ class Runtime:
         )
 
     def autostart_enabled(self) -> bool:
-        """True when a LaunchAgent is installed for this user.
+        """이 사용자에게 LaunchAgent가 설치되어 있으면 True.
 
-        The menu checkbox reflects the plist's presence, not whether the loaded
-        job happens to be running right now.
+        메뉴 체크박스는 plist의 존재를 반영하며, 로드된 작업이 지금 실행 중인지는
+        반영하지 않는다.
         """
 
         try:
@@ -448,14 +448,14 @@ class Runtime:
                 return False
             return agent.plist_path.exists()
         except Exception:
-            logger.debug("could not read the login-autostart state", exc_info=True)
+            logger.debug("로그인 자동 시작 상태를 읽지 못했습니다", exc_info=True)
             return False
 
     def toggle_autostart(self) -> bool | None:
-        """Install or remove the LaunchAgent. Returns the new state, or ``None``.
+        """LaunchAgent를 설치하거나 제거한다. 새 상태 또는 ``None``을 반환한다.
 
-        Disabling removes the plist only: the running process is left alone (it
-        was started explicitly), and it simply will not come back at next login.
+        비활성화는 plist만 제거한다: 실행 중인 프로세스는 건드리지 않으며(명시적으로
+        시작한 것이므로), 다음 로그인에 다시 살아나지 않을 뿐이다.
         """
 
         try:
@@ -468,38 +468,37 @@ class Runtime:
             agent = LaunchAgent(self.settings)
             require_plist_path_allowed(agent.plist_path)
         except PlistPathNotAllowed:
-            logger.warning("login autostart is not available for this plist path")
+            logger.warning("이 plist 경로에서는 로그인 자동 시작을 쓸 수 없습니다")
             return None
         except Exception:
-            logger.debug("login autostart is unavailable", exc_info=True)
+            logger.debug("로그인 자동 시작을 쓸 수 없습니다", exc_info=True)
             return None
 
         try:
             if agent.plist_path.exists():
                 agent.remove_plist()
                 logger.info(
-                    "login autostart disabled; this process keeps running until logout"
+                    "로그인 자동 시작을 껐습니다; 이 프로세스는 로그아웃까지 계속 실행됩니다"
                 )
                 return False
 
             agent.install_plist()
             result = agent.bootstrap()
             if not result.ok:
-                logger.warning("launchctl bootstrap failed: %s", result.message)
+                logger.warning("launchctl bootstrap에 실패했습니다: %s", result.message)
                 agent.remove_plist()
                 return None
-            logger.info("login autostart enabled")
+            logger.info("로그인 자동 시작을 켰습니다")
             return True
         except Exception as exc:
-            logger.warning("login autostart toggle failed: %s", type(exc).__name__)
+            logger.warning("로그인 자동 시작 전환에 실패했습니다: %s", type(exc).__name__)
             return None
 
     def _menu_quit(self) -> None:
-        """Menu "백엔드 종료": unregister launchd management, then stop.
+        """메뉴 "백엔드 종료": launchd 관리를 해제한 뒤 중지한다.
 
-        Without ``bootout`` a launchd ``KeepAlive`` would immediately restart the
-        process; the menu-bar controller stops the run loop so ordered shutdown
-        still runs afterwards.
+        ``bootout``이 없으면 launchd ``KeepAlive``가 프로세스를 즉시 다시 시작한다;
+        메뉴 바 컨트롤러는 실행 루프를 멈추므로 이후에도 순서 있는 종료가 실행된다.
         """
 
         if self.managed:
@@ -508,9 +507,9 @@ class Runtime:
 
                 result = LaunchAgent(self.settings).bootout()
                 if not result.ok:
-                    logger.warning("launchctl bootout failed: %s", result.message)
+                    logger.warning("launchctl bootout에 실패했습니다: %s", result.message)
             except Exception:
-                logger.exception("could not unregister the LaunchAgent")
+                logger.exception("LaunchAgent를 해제하지 못했습니다")
         self.request_stop()
 
     def _wait_plain(self) -> None:
@@ -519,17 +518,17 @@ class Runtime:
 
     def _install_signal_handlers(self) -> None:
         def handle(signum: int, _frame: object) -> None:
-            logger.info("received signal %s; shutting down", signum)
+            logger.info("시그널 %s을(를) 받았습니다; 종료합니다", signum)
             self.request_stop()
 
         for signum in (signal.SIGINT, signal.SIGTERM):
             try:
                 signal.signal(signum, handle)
             except ValueError:
-                # Not on the main thread; the caller drives shutdown itself.
+                # 메인 스레드가 아니다; 호출자가 직접 종료를 이끈다.
                 pass
 
-    # ----------------------------------------------------------------- health
+    # --------------------------------------------------------------------- 헬스
 
     def health(self) -> dict:
         poller = self._poller
@@ -555,7 +554,7 @@ def _version() -> str:
 
 
 def running_pid(settings: Settings) -> int | None:
-    """PID of a live backend for these settings, or ``None``."""
+    """이 설정에 대한 살아 있는 백엔드의 PID, 없으면 ``None``."""
 
     if not ProcessLock.is_held(settings.lock_path):
         return None

@@ -1,8 +1,8 @@
-"""Configuration: environment variables and the local paths this project owns.
+"""설정: 환경변수와 이 프로젝트가 소유하는 로컬 경로.
 
-Every runtime path is overridable so tests and development runs never touch the
-real macOS state (ADR-009). Every default lives under the ``sesametok``
-directory names and the environment prefix is ``SESAMETOK_``.
+모든 런타임 경로는 재정의할 수 있으므로 테스트와 개발 실행이 실제 macOS 상태를
+건드리지 않는다 (ADR-009). 모든 기본값은 ``sesametok`` 디렉터리 이름 아래에 있고
+환경변수 접두사는 ``SESAMETOK_``이다.
 """
 
 from __future__ import annotations
@@ -29,11 +29,11 @@ _TRUTHY = {"1", "true", "yes", "on"}
 
 
 class ConfigError(ValueError):
-    """Raised when an environment variable cannot be interpreted."""
+    """환경변수를 해석할 수 없을 때 발생한다."""
 
 
 class _Env:
-    """Reads ``SESAMETOK_*`` from an explicit mapping, or the real environment."""
+    """명시적인 매핑 또는 실제 환경에서 ``SESAMETOK_*``를 읽는다."""
 
     def __init__(self, source: Mapping[str, str] | None = None) -> None:
         self._source = source
@@ -57,7 +57,9 @@ class _Env:
         try:
             return int(value)
         except ValueError as exc:
-            raise ConfigError(f"{ENV_PREFIX}{name} must be an integer, got {value!r}") from exc
+            raise ConfigError(
+                f"{ENV_PREFIX}{name}은(는) 정수여야 합니다. 받은 값: {value!r}"
+            ) from exc
 
     def float(self, name: str, default: float) -> float:
         value = self.raw(name)
@@ -66,7 +68,9 @@ class _Env:
         try:
             return float(value)
         except ValueError as exc:
-            raise ConfigError(f"{ENV_PREFIX}{name} must be a number, got {value!r}") from exc
+            raise ConfigError(
+                f"{ENV_PREFIX}{name}은(는) 숫자여야 합니다. 받은 값: {value!r}"
+            ) from exc
 
     def boolean(self, name: str, default: bool = False) -> bool:
         value = self.raw(name)
@@ -81,9 +85,13 @@ class _Env:
         try:
             parsed = int(value)
         except ValueError as exc:
-            raise ConfigError(f"{ENV_PREFIX}{name} must be an integer, got {value!r}") from exc
+            raise ConfigError(
+                f"{ENV_PREFIX}{name}은(는) 정수여야 합니다. 받은 값: {value!r}"
+            ) from exc
         if parsed <= 0:
-            raise ConfigError(f"{ENV_PREFIX}{name} must be a positive integer, got {parsed}")
+            raise ConfigError(
+                f"{ENV_PREFIX}{name}은(는) 양의 정수여야 합니다. 받은 값: {parsed}"
+            )
         return parsed
 
     def path(self, name: str, default: Path) -> Path:
@@ -99,7 +107,7 @@ class _Env:
 
 @dataclass(frozen=True)
 class Settings:
-    """Immutable snapshot of the environment this process was started with."""
+    """이 프로세스가 시작될 당시 환경의 불변 스냅숏."""
 
     data_dir: Path = DEFAULT_DATA_DIR
     log_dir: Path = DEFAULT_LOG_DIR
@@ -125,7 +133,7 @@ class Settings:
     webhook_timeout_seconds: float = 5.0
     webhook_max_attempts: int = 5
 
-    # ---------------------------------------------------------------- factories
+    # ---------------------------------------------------------------------- 팩터리
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "Settings":
@@ -156,7 +164,7 @@ class Settings:
             webhook_max_attempts=env.int("WEBHOOK_MAX_ATTEMPTS", 5),
         )
 
-    # -------------------------------------------------------------------- paths
+    # ----------------------------------------------------------------------- 경로
 
     @property
     def archive_path(self) -> Path:
@@ -176,8 +184,8 @@ class Settings:
 
     @property
     def uds_path(self) -> Path:
-        # UNIX socket paths are length-limited (~104 bytes on macOS), so this is
-        # overridable for long data directories.
+        # UNIX 소켓 경로는 길이 제한이 있으므로(macOS에서 약 104바이트), 긴 데이터
+        # 디렉터리를 위해 재정의할 수 있다.
         if self.uds_path_override is not None:
             return self.uds_path_override
         return self.data_dir / "backend.sock"
@@ -192,22 +200,22 @@ class Settings:
 
     @property
     def launchd_plist_path(self) -> Path:
-        # Overridable so tests (and alternate installs) never write into the
-        # real ~/Library/LaunchAgents.
+        # 테스트(와 대체 설치)가 실제 ~/Library/LaunchAgents에 쓰지 않도록
+        # 재정의할 수 있다.
         if self.launchd_plist_override is not None:
             return self.launchd_plist_override
         return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
 
     @property
     def python_executable(self) -> Path:
-        """The interpreter the LaunchAgent must point at for TCC to stay valid."""
+        """TCC가 유효하게 유지되려면 LaunchAgent가 가리켜야 하는 인터프리터."""
 
         return Path(sys.executable).resolve()
 
-    # ----------------------------------------------------------------- helpers
+    # ---------------------------------------------------------------------- 헬퍼
 
     def ensure_directories(self) -> None:
-        """Create the private directories this process writes to."""
+        """이 프로세스가 쓰는 비공개 디렉터리를 만든다."""
 
         ensure_private_dir(self.data_dir)
         ensure_private_dir(self.outbox_dir)
@@ -215,7 +223,7 @@ class Settings:
         ensure_dir(self.log_dir)
 
     def redacted(self) -> dict[str, object]:
-        """A log-safe view: secrets replaced, never the raw values."""
+        """로그에 안전한 뷰: 비밀 값을 대체하며, 원본 값은 절대 담지 않는다."""
 
         return {
             "data_dir": str(self.data_dir),

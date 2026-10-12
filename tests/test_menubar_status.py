@@ -1,7 +1,8 @@
-"""Headless tests for the menu bar status model and menu contents.
+"""메뉴바 상태 모델과 메뉴 내용에 대한 헤드리스 테스트.
 
-No test here needs AppKit: ``app.status`` is pure, and the one view-layer check is
-a subprocess import guard. Personal data must never appear in menu text.
+여기 어떤 테스트도 AppKit을 필요로 하지 않는다. ``app.status``는 순수하고, 뷰 계층
+검사 하나는 서브프로세스 임포트 가드다. 개인 데이터는 메뉴 텍스트에 절대 나타나면
+안 된다.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from sesametok_backend.app.status import (
 
 NOW = datetime(2026, 1, 2, 12, 0, 0, tzinfo=timezone.utc)
 
-#: Top-level modules the import guard blocks to simulate a non-AppKit machine.
+#: 임포트 가드가 차단해 AppKit 없는 머신을 흉내 내는 최상위 모듈들.
 _BLOCKED_MODULES = ("AppKit", "Foundation", "objc", "PyObjCTools", "Quartz", "ApplicationServices")
 
 
@@ -71,7 +72,7 @@ def _snapshot(**overrides):
     return build_snapshot(**inputs)
 
 
-# --------------------------------------------------------------- precedence
+# --------------------------------------------------------------- 우선순위
 
 
 def test_ok_is_the_quiet_default() -> None:
@@ -113,7 +114,7 @@ def test_failure_threshold_degrades_then_errors() -> None:
 def test_missing_permissions_or_stopped_polling_degrades() -> None:
     assert _state(permissions_ok=False) is Status.degraded
     assert _state(polling=False) is Status.degraded
-    # A deliberate pause is not a degradation.
+    # 의도적인 일시정지는 성능저하가 아니다.
     assert _state(polling=False, paused=True) is Status.paused
 
 
@@ -123,7 +124,7 @@ def test_never_synced_degrades_unless_starting_or_paused() -> None:
     assert _state(last_sync_at=None, polling=False, paused=True) is Status.paused
 
 
-# ------------------------------------------------------------------ symbols
+# ------------------------------------------------------------------ 심볼
 
 
 def test_symbol_mapping_matches_section_6_1() -> None:
@@ -139,7 +140,7 @@ def test_symbol_mapping_matches_section_6_1() -> None:
         assert symbol_name(state) == symbol
 
 
-# ------------------------------------------------------------------ summary
+# ------------------------------------------------------------------ 요약
 
 
 def test_summary_uses_injected_now_and_counts_only() -> None:
@@ -159,9 +160,9 @@ def test_summary_accepts_rfc3339_and_epoch_timestamps() -> None:
 
 
 def test_summary_omits_unknown_fields_and_never_leaks_names() -> None:
-    # Only the state label when nothing else is known.
+    # 아무것도 모를 때는 상태 라벨만 나온다.
     assert summary_text(Status.paused) == "일시정지"
-    # A failure count is a count, not content.
+    # 실패 횟수는 내용이 아니라 개수다.
     text = summary_text(Status.error, consecutive_failures=7, room_count=3, last_sync_at=None)
     assert text == "오류 · 방 3 · 연속 실패 7회"
     assert "비밀방" not in text and "닉네임" not in text
@@ -173,7 +174,7 @@ def test_relative_time_boundaries() -> None:
     assert relative_time(NOW - timedelta(minutes=1), NOW) == "1분 전"
     assert relative_time(NOW - timedelta(hours=1), NOW) == "1시간 전"
     assert relative_time(NOW - timedelta(days=1), NOW) == "1일 전"
-    # Clock skew never produces a negative phrase.
+    # 시계 오차가 있어도 음수 표현이 나오지 않는다.
     assert relative_time(NOW + timedelta(seconds=5), NOW) == "0초 전"
 
 
@@ -183,7 +184,7 @@ def test_build_snapshot_composes_state_and_summary() -> None:
     assert snapshot.summary == "정상 · 방 42 · 최근 동기화 3초 전"
 
 
-# -------------------------------------------------------------- menu contents
+# -------------------------------------------------------------- 메뉴 내용
 
 
 def _by_id(items, item_id):
@@ -224,7 +225,7 @@ def test_menu_has_no_media_or_emoticon_toggle() -> None:
             assert "이모티콘" not in item.title
         assert item.action is None or "media" not in item.action
         assert item.action is None or "emoticon" not in item.action
-    # The login autostart checkbox is the only checkbox (ADR-007 keeps it).
+    # 로그인 자동시작 체크박스가 유일한 체크박스다(ADR-007이 유지한다).
     checkboxes = [item for item in items if item.kind == status_model.KIND_CHECKBOX]
     assert [item.item_id for item in checkboxes] == [ITEM_AUTOSTART]
 
@@ -273,7 +274,7 @@ def test_sync_now_disabled_while_paused() -> None:
     assert _by_id(menu_items(_snapshot()), status_model.ITEM_SYNC_NOW).enabled is True
 
 
-# ------------------------------------------------------------- import guards
+# ------------------------------------------------------------- 임포트 가드
 
 _STATUS_IMPORT_PROBE = f"""
 import builtins, sys
@@ -319,7 +320,7 @@ def test_menubar_import_raises_a_clear_error_without_appkit(monkeypatch) -> None
         importlib.import_module("sesametok_backend.app.menubar")
 
 
-# ------------------------------------------------- runtime integration (plain)
+# ------------------------------------------------- 런타임 통합(순수)
 
 _KEY = bytes.fromhex("ab" * 32)
 _USER_ID = 123456789
@@ -333,7 +334,7 @@ class _QuietSource:
 
 
 def test_run_foreground_without_menubar_uses_the_plain_wait_loop(env: Path) -> None:
-    """Requirement 3: ``no_menubar`` keeps the existing headless wait loop."""
+    """요구사항 3: ``no_menubar``는 기존 헤드리스 대기 루프를 유지한다."""
 
     from dataclasses import replace
 

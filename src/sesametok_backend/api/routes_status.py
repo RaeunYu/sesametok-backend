@@ -1,7 +1,7 @@
-"""Health and status endpoints.
+"""헬스와 상태 엔드포인트.
 
-``GET /health`` is deliberately token-free so a supervisor can probe liveness;
-every other endpoint requires the bearer token.
+``GET /health``는 슈퍼바이저가 생존 여부를 확인할 수 있도록 일부러 토큰을 요구하지 않는다.
+다른 모든 엔드포인트는 Bearer 토큰을 요구한다.
 """
 
 from __future__ import annotations

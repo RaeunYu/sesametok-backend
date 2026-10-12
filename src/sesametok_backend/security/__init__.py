@@ -1,1 +1,1 @@
-"""Security-adjacent helpers: token storage today, keychain and archive key later."""
+"""보안 관련 도우미: 지금은 토큰 저장, 이후 키체인과 아카이브 키."""

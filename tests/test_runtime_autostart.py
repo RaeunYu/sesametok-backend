@@ -1,7 +1,7 @@
-"""Login-autostart toggle wiring (menu bar checkbox ↔ LaunchAgent).
+"""로그인 자동 시작 토글 배선 (메뉴 바 체크박스 ↔ LaunchAgent).
 
-Never touches real launchd: bootstrap/bootout are stubbed, and the plist lives in
-the temp directory the ``env`` fixture provides.
+실제 launchd는 절대 건드리지 않는다: bootstrap/bootout은 스텁이고, plist는 ``env``
+픽스처가 제공하는 임시 디렉터리에 있다.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def test_toggle_installs_then_removes_the_plist(env, stubbed_launchctl) -> None:
     assert runtime.toggle_autostart() is False
     assert not settings.launchd_plist_path.exists()
     assert runtime.autostart_enabled() is False
-    # Disabling removes the plist but does not boot the running job out.
+    # 비활성화는 plist만 제거하고, 실행 중인 작업을 bootout하지는 않는다.
     assert stubbed_launchctl == ["bootstrap"]
 
 
@@ -90,7 +90,7 @@ def test_failed_bootstrap_is_reported_and_rolled_back(env, monkeypatch) -> None:
 
 
 def test_disallowed_plist_path_refuses_the_toggle(env, monkeypatch) -> None:
-    # Outside ~/Library/LaunchAgents and outside temp roots.
+    # ~/Library/LaunchAgents 밖이고 임시 루트 밖이다.
     monkeypatch.setenv("SESAMETOK_LAUNCHD_PLIST", str(Path.home() / ".config" / "x.plist"))
     settings = Settings.from_env()
     runtime = _runtime(settings)
@@ -115,7 +115,7 @@ def test_plist_contains_the_launch_arguments(env, stubbed_launchctl) -> None:
 
 
 def test_menu_quit_boots_out_when_managed(env, monkeypatch) -> None:
-    """A managed process must bootout or KeepAlive restarts it."""
+    """관리되는 프로세스는 bootout해야 한다. 아니면 KeepAlive가 다시 시작한다."""
 
     settings = Settings.from_env()
     runtime = Runtime(
@@ -141,7 +141,7 @@ def test_menu_quit_boots_out_when_managed(env, monkeypatch) -> None:
 
 def test_menu_quit_does_not_touch_launchd_when_unmanaged(env, monkeypatch) -> None:
     settings = Settings.from_env()
-    runtime = _runtime(settings)  # managed defaults to False
+    runtime = _runtime(settings)  # managed의 기본값은 False
     monkeypatch.setattr(
         launcher.LaunchAgent,
         "bootout",
@@ -169,6 +169,6 @@ def test_menu_quit_survives_a_launchctl_failure(env, monkeypatch) -> None:
         lambda self: (_ for _ in ()).throw(RuntimeError("launchctl exploded")),
     )
 
-    runtime._menu_quit()  # must still request a stop
+    runtime._menu_quit()  # 그래도 중지를 요청해야 한다
 
     assert runtime.stopping is True

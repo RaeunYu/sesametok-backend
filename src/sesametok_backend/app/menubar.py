@@ -1,23 +1,23 @@
-"""``NSStatusItem`` menu bar view layer (PyObjC, main thread only).
+"""``NSStatusItem`` 메뉴바 뷰 계층(PyObjC, 메인 스레드 전용).
 
-This is the AppKit half of the menu bar. All decisions live in
-:mod:`sesametok_backend.app.status`; this module only renders them and forwards
-user intent to callbacks.
+이것은 메뉴바의 AppKit 쪽 절반이다. 모든 판단은
+:mod:`sesametok_backend.app.status`에 있고, 이 모듈은 그것을 그려서 사용자 의도를
+콜백으로 전달할 뿐이다.
 
-Rules this module enforces:
+이 모듈이 강제하는 규칙:
 
-* **Main thread only.** Every AppKit object (``NSStatusItem``, ``NSImage``,
-  ``NSMenu``, ``NSPasteboard``) is touched on the main thread. ``set_status`` may
-  be called from any thread and marshals through ``AppHelper.callAfter`` without
-  blocking the caller.
-* **No Dock icon.** The activation policy is ``Accessory``.
-* **Template image.** The SF Symbol is marked as a template so the icon adapts to
-  the light/dark menu bar, with a text title fallback when the symbol is missing.
-* **No personal data.** Tooltips and menu text come from the pure summary, which
-  contains state, counts, and timestamps only.
+* **메인 스레드 전용.** 모든 AppKit 객체(``NSStatusItem``, ``NSImage``,
+  ``NSMenu``, ``NSPasteboard``)는 메인 스레드에서만 만진다. ``set_status``는 어느
+  스레드에서든 호출할 수 있으며, 호출자를 막지 않고 ``AppHelper.callAfter``를 통해
+  메인 스레드로 전달한다.
+* **Dock 아이콘 없음.** 활성화 정책은 ``Accessory``다.
+* **템플릿 이미지.** SF Symbol은 템플릿으로 표시해 아이콘이 메뉴바의 밝은/어두운
+  모드에 맞춰지게 하고, 심볼이 없으면 텍스트 제목으로 대체한다.
+* **개인 데이터 없음.** 툴팁과 메뉴 텍스트는 상태, 개수, 타임스탬프만 담은 순수
+  요약에서 온다.
 
-Importing this module without AppKit raises a clear :class:`ImportError`; importing
-:mod:`sesametok_backend.app.status` never requires AppKit.
+AppKit 없이 이 모듈을 임포트하면 명확한 :class:`ImportError`가 발생한다.
+:mod:`sesametok_backend.app.status` 임포트는 AppKit을 전혀 요구하지 않는다.
 """
 
 from __future__ import annotations
@@ -29,16 +29,16 @@ import time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-try:  # pragma: no cover - import guard, exercised only where pyobjc is absent
+try:  # pragma: no cover - 임포트 가드. pyobjc가 없는 곳에서만 실행된다
     import AppKit
     import Foundation
     import objc
     from PyObjCTools import AppHelper
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
-        "sesametok_backend.app.menubar requires AppKit (pyobjc-framework-Cocoa). "
-        "Install the project runtime dependencies, or set SESAMETOK_NO_MENUBAR=1 "
-        "to run headless."
+        "sesametok_backend.app.menubar에는 AppKit(pyobjc-framework-Cocoa)이 필요합니다. "
+        "프로젝트 런타임 의존성을 설치하거나, 헤드리스로 실행하려면 "
+        "SESAMETOK_NO_MENUBAR=1을 설정하세요."
     ) from exc
 
 from .. import diagnostics
@@ -50,7 +50,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger("sesametok_backend.app.menubar")
 
-#: Text titles used when an SF Symbol cannot be built (older macOS, lookup miss).
+#: SF Symbol을 만들 수 없을 때(구형 macOS, 조회 실패) 쓰는 텍스트 제목.
 FALLBACK_TITLES: dict[Status, str] = {
     Status.starting: "◌",
     Status.ok: "●",
@@ -63,56 +63,56 @@ FALLBACK_TITLES: dict[Status, str] = {
 _SELECTOR_PERFORM = b"performAction:"
 
 
-# --------------------------------------------------------------------- openers
+# --------------------------------------------------------------------- 열기
 
 
 def _spawn_open(args: list[str]) -> None:
     try:
         subprocess.run(["open", *args], check=False)
     except (OSError, subprocess.SubprocessError):
-        logger.warning("could not open %s", args[0] if args else "?")
+        logger.warning("%s을(를) 열 수 없습니다", args[0] if args else "?")
 
 
 def open_path(path: str) -> None:
-    """Open *path* with macOS ``open`` (log file)."""
+    """macOS ``open``으로 *path*를 연다(로그 파일)."""
 
     _spawn_open([path])
 
 
 def open_url(url: str) -> None:
-    """Open a System Settings URL (``diagnostics.*_URL``)."""
+    """시스템 설정 URL을 연다(``diagnostics.*_URL``)."""
 
     _spawn_open([url])
 
 
 def open_application(name: str) -> None:
-    """Open an installed application by bundle name."""
+    """번들 이름으로 설치된 애플리케이션을 연다."""
 
     _spawn_open(["-a", name])
 
 
 def _autostart_unavailable() -> bool | None:
-    """Default login-autostart toggle: report unavailability, change nothing."""
+    """기본 로그인 자동시작 토글: 사용할 수 없음을 알리고 아무것도 바꾸지 않는다."""
 
-    logger.warning("login autostart toggle is not available in this build")
+    logger.warning("이 빌드에서는 로그인 자동시작 토글을 사용할 수 없습니다")
     return None
 
 
 def _default_quit() -> None:
-    """Default quit: terminate the NSApplication (launchd may restart it)."""
+    """기본 종료: NSApplication을 종료한다(launchd가 다시 살릴 수 있다)."""
 
     AppKit.NSApplication.sharedApplication().terminate_(None)
 
 
-# ------------------------------------------------------------ status provider
+# ------------------------------------------------------------ 상태 공급자
 
 
 class RuntimeStatusProvider:
-    """Builds :class:`StatusSnapshot` from a live :class:`Runtime`.
+    """실제 :class:`Runtime`에서 :class:`StatusSnapshot`을 만든다.
 
-    Reads ``Runtime.health()`` and ``poller.stats`` for state and reuses a cached
-    archive read for the room count and webhook list, so the menu refresh never
-    opens an encrypted connection every tick. No personal data is read.
+    상태를 위해 ``Runtime.health()``와 ``poller.stats``를 읽고, 방 개수와 webhook
+    목록을 위해 캐시된 아카이브 읽기를 재사용한다. 그래야 메뉴 갱신이 매 주기마다
+    암호화 연결을 열지 않는다. 개인 데이터는 읽지 않는다.
     """
 
     def __init__(
@@ -164,24 +164,24 @@ class RuntimeStatusProvider:
         try:
             archive = self._runtime.archive_factory()()
         except Exception:
-            logger.debug("archive not ready for menu status", exc_info=True)
+            logger.debug("메뉴 상태를 위한 아카이브가 아직 준비되지 않았습니다", exc_info=True)
             return self._rooms, self._webhooks
         try:
             self._rooms = archive.count_rooms()
             self._webhooks = tuple(archive.list_webhooks(include_secret=False))
             self._archive_at = now
         except Exception:
-            logger.debug("could not read archive menu status", exc_info=True)
+            logger.debug("아카이브 메뉴 상태를 읽지 못했습니다", exc_info=True)
         finally:
             archive.close()
         return self._rooms, self._webhooks
 
 
-# ------------------------------------------------------------------ controller
+# ------------------------------------------------------------------ 컨트롤러
 
 
 class MenuBarController(Foundation.NSObject):
-    """Owns the ``NSStatusItem`` and its menu; every mutation is main-thread only."""
+    """``NSStatusItem``과 그 메뉴를 소유한다. 모든 변경은 메인 스레드 전용이다."""
 
     def init(self) -> Any:
         self = objc.super(MenuBarController, self).init()
@@ -200,7 +200,7 @@ class MenuBarController(Foundation.NSObject):
         self._log_path = ""
         return self
 
-    # -------------------------------------------------------------- wiring
+    # -------------------------------------------------------------- 연결
 
     @objc.python_method
     def configure(
@@ -218,11 +218,11 @@ class MenuBarController(Foundation.NSObject):
         executable_path: str = "",
         log_path: str = "",
     ) -> None:
-        """Install callbacks. Every one is optional with a safe default.
+        """콜백을 설치한다. 모두 선택 사항이며 안전한 기본값을 가진다.
 
-        The login-autostart callback defaults to
-        :func:`_autostart_unavailable`, so this module stays independent of
-        ``launcher.py`` until the launcher milestone injects a real one.
+        로그인 자동시작 콜백은 :func:`_autostart_unavailable`로 기본 설정되어,
+        launcher 마일스톤이 실제 콜백을 주입하기 전까지 이 모듈이 ``launcher.py``와
+        독립적으로 유지된다.
         """
 
         self._status_provider = status_provider
@@ -257,20 +257,20 @@ class MenuBarController(Foundation.NSObject):
 
     @objc.python_method
     def _quit(self) -> None:
-        """Run the injected quit callback, then stop the run loop so teardown runs."""
+        """주입된 종료 콜백을 실행하고, 정리 작업이 돌도록 런 루프를 멈춘다."""
 
         try:
             self._quit_callback()
         finally:
-            # The default callback terminates NSApp; a runtime callback only marks
-            # the runtime stopping, so stopping the loop is always correct here.
+            # 기본 콜백은 NSApp을 종료한다. 런타임 콜백은 런타임을 중지 상태로
+            # 표시할 뿐이므로, 여기서 루프를 멈추는 것이 항상 옳다.
             self.stop()
 
-    # --------------------------------------------------------------- install
+    # --------------------------------------------------------------- 설치
 
     @objc.python_method
     def install(self) -> None:
-        """Create the status item and menu; call once, on the main thread."""
+        """상태 아이템과 메뉴를 만든다. 메인 스레드에서 한 번만 호출한다."""
 
         app = AppKit.NSApplication.sharedApplication()
         app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
@@ -286,7 +286,7 @@ class MenuBarController(Foundation.NSObject):
 
     @objc.python_method
     def start_refresh(self, interval: float = 1.0) -> None:
-        """Start a daemon thread that re-reads the status every *interval* seconds."""
+        """*interval*초마다 상태를 다시 읽는 데몬 스레드를 시작한다."""
 
         if self._refresh_thread is not None:
             return
@@ -307,13 +307,13 @@ class MenuBarController(Foundation.NSObject):
             try:
                 self.set_status(provider())
             except Exception:
-                logger.exception("menu bar status refresh failed")
+                logger.exception("메뉴바 상태 갱신에 실패했습니다")
 
-    # ---------------------------------------------------------------- status
+    # ---------------------------------------------------------------- 상태
 
     @objc.python_method
     def set_status(self, snapshot: StatusSnapshot) -> None:
-        """Render *snapshot*; marshals to the main thread and never blocks."""
+        """*snapshot*을 그린다. 메인 스레드로 전달하며 결코 블로킹하지 않는다."""
 
         if not self._installed:
             self._snapshot = snapshot
@@ -351,7 +351,7 @@ class MenuBarController(Foundation.NSObject):
         else:
             button.setImage_(None)
             button.setTitle_(FALLBACK_TITLES.get(snapshot.status, "?"))
-        # The tooltip shows the same text summary as the first menu line.
+        # 툴팁은 첫 메뉴 줄과 같은 텍스트 요약을 보여준다.
         button.setToolTip_(snapshot.summary)
 
     @objc.python_method
@@ -388,23 +388,23 @@ class MenuBarController(Foundation.NSObject):
         return nsitem
 
     def performAction_(self, sender: Any) -> None:
-        """Single AppKit action; dispatches by the item's represented action id."""
+        """단일 AppKit 액션. 항목이 표현하는 action id로 분기한다."""
 
         action = sender.representedObject()
         handler = self._actions.get(action)
         if handler is None:
-            logger.warning("no handler for menu action %r", action)
+            logger.warning("메뉴 액션 %r에 대한 핸들러가 없습니다", action)
             return
         try:
             handler()
         except Exception:
-            logger.exception("menu action %r failed", action)
+            logger.exception("메뉴 액션 %r이(가) 실패했습니다", action)
 
     @objc.python_method
     def _copy_token(self, supplier: Callable[[], str | None] | None) -> None:
         token = supplier() if supplier is not None else None
         if not token:
-            logger.warning("no API token available to copy")
+            logger.warning("복사할 API 토큰이 없습니다")
             return
         pasteboard = AppKit.NSPasteboard.generalPasteboard()
         pasteboard.clearContents()
@@ -413,14 +413,14 @@ class MenuBarController(Foundation.NSObject):
     @objc.python_method
     def _open_log(self) -> None:
         if not self._log_path:
-            logger.warning("no log path configured")
+            logger.warning("로그 경로가 설정되지 않았습니다")
             return
         open_path(self._log_path)
 
-    # ----------------------------------------------------------------- stop
+    # ----------------------------------------------------------------- 종료
 
     def stop(self) -> None:
-        """Shutdown hook: stop the refresh thread and the AppKit event loop."""
+        """종료 훅: 갱신 스레드와 AppKit 이벤트 루프를 멈춘다."""
 
         if self._stop_event.is_set():
             return
@@ -432,11 +432,11 @@ class MenuBarController(Foundation.NSObject):
 
     @objc.python_method
     def _stop_loop(self) -> None:
-        """Stop ``NSApp.run()`` so ordered shutdown still runs afterwards.
+        """``NSApp.run()``을 멈춰서 이후에 순서 있는 종료가 그대로 실행되게 한다.
 
-        ``AppHelper.stopEventLoop()`` calls ``NSApp.terminate_()``, which exits the
-        process before ``Runtime.shutdown()`` finishes; plain ``stop_`` only ends
-        the run loop, and a wake event makes it take effect immediately.
+        ``AppHelper.stopEventLoop()``는 ``NSApp.terminate_()``를 호출하는데, 이는
+        ``Runtime.shutdown()``이 끝나기 전에 프로세스를 종료해 버린다. 순수한
+        ``stop_``은 런 루프만 끝내며, wake 이벤트를 보내면 즉시 효력이 난다.
         """
 
         app = AppKit.NSApplication.sharedApplication()
@@ -455,13 +455,13 @@ class MenuBarController(Foundation.NSObject):
         app.postEvent_atStart_(wake, True)
 
 
-# ----------------------------------------------------------------- entry point
+# ------------------------------------------------------------------ 진입점
 
 
 def _trigger_sync(runtime: Runtime) -> None:
     poller = runtime.poller
     if poller is None:
-        logger.warning("no poller to sync")
+        logger.warning("동기화할 폴러가 없습니다")
         return
     poller.trigger()
 
@@ -477,12 +477,12 @@ def _toggle_pause(runtime: Runtime) -> None:
 
 
 def _run_app(_argv: list[str] | None = None) -> None:
-    """Run the application loop so ``runEventLoop`` returns when it stops.
+    """앱 루프를 실행해 멈출 때 ``runEventLoop``이 반환되게 한다.
 
-    ``AppHelper.runEventLoop`` defaults to ``NSApplicationMain``, which never
-    returns and exits the process as soon as the app terminates; ordered shutdown
-    would then be skipped. Running ``NSApp.run()`` ourselves keeps the process
-    alive so ``Runtime.shutdown()`` still executes after the menu bar stops.
+    ``AppHelper.runEventLoop``는 기본적으로 ``NSApplicationMain``을 쓰는데, 이는
+    결코 반환하지 않고 앱이 종료되는 즉시 프로세스를 끝내 버린다. 그러면 순서 있는
+    종료가 건너뛰어진다. ``NSApp.run()``을 우리가 직접 실행하면 프로세스가 살아
+    있으므로 메뉴바가 멈춘 뒤에도 ``Runtime.shutdown()``이 여전히 실행된다.
     """
 
     AppKit.NSApplication.sharedApplication().run()
@@ -497,13 +497,13 @@ def run_menubar(
     autostart_provider: Callable[[], bool] | None = None,
     toggle_autostart: Callable[[], bool | None] | None = None,
 ) -> int:
-    """Build the menu bar from *runtime* and run the AppKit event loop.
+    """*runtime*에서 메뉴바를 만들고 AppKit 이벤트 루프를 실행한다.
 
-    Registers a shutdown hook that stops the loop, so ``runtime.shutdown()`` works
-    from any thread. *quit_callback* handles "백엔드 종료"; it defaults to
-    terminating the ``NSApplication``. *autostart_provider* feeds the login-autostart
-    checkbox and *toggle_autostart* changes it. Must be called on the main
-    thread.
+    루프를 멈추는 종료 훅을 등록하므로 어느 스레드에서든 ``runtime.shutdown()``이
+    동작한다. *quit_callback*은 "백엔드 종료"를 처리하며, 기본값은
+    ``NSApplication``을 종료하는 것이다. *autostart_provider*는 로그인 자동시작
+    체크박스를 채우고, *toggle_autostart*는 그 값을 바꾼다. 메인 스레드에서
+    호출해야 한다.
     """
 
     provider = RuntimeStatusProvider(
@@ -524,10 +524,10 @@ def run_menubar(
     controller.install()
     runtime.add_shutdown_hook(controller.stop)
     controller.start_refresh(refresh_seconds)
-    logger.info("menu bar started")
+    logger.info("메뉴바를 시작했습니다")
     try:
         AppHelper.runEventLoop(main=_run_app)
     finally:
         controller.stop()
-    logger.info("menu bar stopped")
+    logger.info("메뉴바를 멈췄습니다")
     return 0

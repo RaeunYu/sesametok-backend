@@ -1,7 +1,7 @@
-"""API contract tests.
+"""API 계약 테스트.
 
-Exercises the real HTTP server over loopback with a synthetic encrypted archive;
-no KakaoTalk installation or real network is involved.
+합성 암호화 아카이브를 두고 실제 HTTP 서버를 루프백으로 돌린다. 카카오톡 설치나 실제
+네트워크는 관여하지 않는다.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ class FakePoller:
 
 
 class FakeSendQueue:
-    """Records requests and mirrors the real queue's consent gate."""
+    """요청을 기록하고 실제 큐의 동의 게이트를 흉내 낸다."""
 
     def __init__(self) -> None:
         self.requests: list = []
@@ -79,7 +79,7 @@ def api(tmp_path: Path):
         log_dir=tmp_path / "logs",
         host="127.0.0.1",
         port=0,
-        # pytest's tmp dir is too long for an AF_UNIX path on macOS.
+        # pytest의 tmp 디렉터리는 macOS의 AF_UNIX 경로로 쓰기에는 너무 길다.
         uds_path_override=Path("/tmp") / f"st-{tmp_path.name}.sock",
     )
     settings.ensure_directories()
@@ -146,7 +146,7 @@ def raw_http(
     body: dict | None = None,
     timeout: float = 3.0,
 ) -> tuple[int, bytes]:
-    """Minimal HTTP/1.1 client so SSE streams can be read without hanging."""
+    """SSE 스트림이 멈추지 않고 읽히도록 만든 최소한의 HTTP/1.1 클라이언트."""
 
     payload = b"" if body is None else json.dumps(body).encode("utf-8")
     headers = [f"{method} {path} HTTP/1.1", "Host: 127.0.0.1", "Connection: close"]
@@ -421,7 +421,7 @@ def test_unix_socket_serves_the_same_api(api) -> None:
     raw = b"".join(chunks)
     assert b"200" in raw.split(b"\r\n", 1)[0]
     assert b'"ok"' in raw
-    # The socket must not be world-readable or world-writable.
+    # 소켓은 다른 사용자가 읽거나 쓸 수 있으면 안 된다.
     assert settings.uds_path.stat().st_mode & 0o077 == 0
 
 
@@ -461,7 +461,7 @@ def test_webhook_rejects_external_and_non_http_targets(api) -> None:
         service, "POST", "/v1/webhooks", body={"url": "http://example.com/hook"}
     )
     assert status == 400
-    assert "loopback" in payload["error"]["message"]
+    assert "루프백" in payload["error"]["message"]
 
     status, payload = call(
         service, "POST", "/v1/webhooks", body={"url": "https://127.0.0.1:9999/hook"}
@@ -472,7 +472,7 @@ def test_webhook_rejects_external_and_non_http_targets(api) -> None:
         service, "POST", "/v1/webhooks", body={"url": "http://127.0.0.1/hook"}
     )
     assert status == 400
-    assert "port" in payload["error"]["message"]
+    assert "포트" in payload["error"]["message"]
 
 
 def test_webhook_rejects_unknown_kinds(api) -> None:
@@ -484,4 +484,4 @@ def test_webhook_rejects_unknown_kinds(api) -> None:
         body={"url": "http://127.0.0.1:9999/hook", "kinds": ["not.a.kind"]},
     )
     assert status == 400
-    assert "unknown event kind" in payload["error"]["message"]
+    assert "알 수 없는 이벤트 종류" in payload["error"]["message"]

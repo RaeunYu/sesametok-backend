@@ -1,4 +1,4 @@
-"""Single-message, sync, and send endpoints."""
+"""단일 메시지, 동기화, 발신 엔드포인트."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from .context import ApiContext
 from .errors import ApiError, bad_request, not_found
 from .router import Request, Response
 
-# HTTP status per send error code. Everything else is a downstream UI failure.
+# 발신 오류 코드별 HTTP 상태. 나머지는 전부 하위 UI 실패다.
 SEND_STATUS: dict[str, int] = {
     "bad_request": 400,
     "bad_mode": 400,
@@ -28,15 +28,15 @@ SEND_STATUS: dict[str, int] = {
 
 
 def _outbox_path(context: ApiContext, raw: object) -> Path:
-    """Only files already inside our outbox may be sent (no path traversal)."""
+    """이미 우리 outbox 안에 있는 파일만 보낼 수 있다(경로 탈출 금지)."""
 
     if not isinstance(raw, str) or not raw.strip():
-        raise bad_request("image_path must be a string", "image_path_outside_outbox")
+        raise bad_request("image_path는 문자열이어야 합니다", "image_path_outside_outbox")
     outbox = context.settings.outbox_dir.resolve()
     candidate = Path(raw).expanduser().resolve()
     if outbox not in candidate.parents or not candidate.is_file():
         raise bad_request(
-            "image_path must be an existing file inside the outbox directory "
+            "image_path는 outbox 디렉터리 안에 있는 기존 파일이어야 합니다 "
             f"({outbox})",
             "image_path_outside_outbox",
         )
@@ -52,27 +52,27 @@ def get_message(context: ApiContext, request: Request) -> Response:
     finally:
         archive.close()
     if message is None:
-        raise not_found(f"no archived message {message_id}", "message_not_found")
+        raise not_found(f"아카이브에 {message_id} 메시지가 없습니다", "message_not_found")
     return Response.json(message.to_dict())
 
 
 def post_sync(context: ApiContext, request: Request) -> Response:
     context.require_auth(request)
     if context.poller is None:
-        raise ApiError(503, "poller_unavailable", "the poller is not running", retryable=True)
+        raise ApiError(503, "poller_unavailable", "폴러가 실행 중이 아닙니다", retryable=True)
     context.poller.trigger()
     return Response.json({"result": "scheduled"}, status=202)
 
 
 def post_message(context: ApiContext, request: Request) -> Response:
-    """Send, draft, or dry-run a message."""
+    """메시지를 발신하거나, 초안을 만들거나, 드라이런한다."""
 
     context.require_auth(request)
     if context.send_queue is None:
         raise ApiError(
             503,
             "send_unavailable",
-            "sending is not enabled in this build",
+            "이 빌드에서는 발신이 활성화되어 있지 않습니다",
             retryable=False,
         )
 

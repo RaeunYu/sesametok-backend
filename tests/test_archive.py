@@ -180,7 +180,7 @@ def test_event_pruning_by_age_and_count(archive: Archive) -> None:
 
     removed = archive.prune_events(days=1, max_count=2, now="2026-01-01T12:00:00+00:00")
 
-    assert removed == 4  # 3 expired + 1 beyond the newest two
+    assert removed == 4  # 만료 3개 + 최신 2개를 넘어선 1개
     assert [event.payload["n"] for event in archive.events_since(0)] == [1, 2]
 
 

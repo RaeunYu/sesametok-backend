@@ -1,8 +1,7 @@
-"""Known-answer tests for the KakaoTalk key derivation.
+"""카카오톡 키 유도에 대한 known-answer 테스트.
 
-These vectors are derived from fully synthetic inputs; they contain no real
-account data. If they fail, the implementation is wrong — never update them to
-match the code.
+이 벡터들은 전부 합성 입력에서 유도한 것이며 실제 계정 데이터를 담고 있지 않다.
+실패한다면 구현이 잘못된 것이다 — 코드에 맞춰 벡터를 갱신하지 마라.
 """
 
 from __future__ import annotations

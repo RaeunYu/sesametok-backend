@@ -1,7 +1,7 @@
-"""KakaoTalk preference plists: user-id and active-account candidates.
+"""카카오톡 환경설정 plist: user id 및 활성 계정 후보.
 
-Only the structure of the plist is read. Values are returned to the caller for
-verification and are never logged or persisted in plaintext.
+plist의 구조만 읽는다. 값은 검증을 위해 호출자에게 반환하며, 로그에 남기거나
+평문으로 저장하지 않는다.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ _HEX128 = re.compile(r"^[0-9a-f]{128}$")
 def preference_plists(
     directories: Iterable[Path] | None = None,
 ) -> tuple[Path, ...]:
-    """Sorted ``com.kakao.KakaoTalkMac*.plist`` files under the preference dirs."""
+    """환경설정 디렉터리 아래의 ``com.kakao.KakaoTalkMac*.plist`` 파일들을 정렬한 것."""
 
     found: set[Path] = set()
     for directory in directories if directories is not None else PREFERENCES_DIRS:
@@ -44,7 +44,7 @@ def preference_plists(
 
 
 def load_plist(path: Path) -> dict[str, Any]:
-    """Parse a plist (binary or XML). Malformed files yield an empty mapping."""
+    """plist(바이너리 또는 XML)를 파싱한다. 잘못된 파일은 빈 매핑을 돌려준다."""
 
     try:
         with path.open("rb") as handle:
@@ -69,7 +69,7 @@ def _positive_int(value: Any) -> int | None:
 
 
 def user_id_candidates(plists: Iterable[Path] | None = None) -> list[int]:
-    """Positive user-id candidates from direct keys and ``AlertKakaoIDsList``."""
+    """직접 키와 ``AlertKakaoIDsList`` 에서 얻은 양수 user id 후보들."""
 
     candidates: set[int] = set()
     for path in plists if plists is not None else preference_plists():
@@ -98,7 +98,7 @@ def _is_active_flag(value: Any) -> bool:
 
 
 def active_account_hashes(plists: Iterable[Path] | None = None) -> list[str]:
-    """128-hex active-account hashes from ``DESIGNATEDFRIENDSREVISION:<hash>`` keys."""
+    """``DESIGNATEDFRIENDSREVISION:<hash>`` 키에서 얻은 128-hex 활성 계정 해시들."""
 
     hashes: set[str] = set()
     for path in plists if plists is not None else preference_plists():
@@ -115,10 +115,10 @@ def active_account_hashes(plists: Iterable[Path] | None = None) -> list[str]:
 
 
 def empty_account_hashes() -> frozenset[str]:
-    """Hashes that stand for "no account".
+    """계정 없음(no account)을 나타내는 해시들.
 
-    An *empty account hash* sentinel must be excluded; the obvious candidates are
-    listed here and the set is kept explicit.
+    *빈 계정 해시* 센티널은 제외해야 한다. 명백한 후보들을 여기 나열하고 그
+    집합을 명시적으로 유지한다.
     """
 
     return frozenset(
@@ -130,13 +130,13 @@ def empty_account_hashes() -> frozenset[str]:
 
 
 def account_hash_for(user_id: int) -> str:
-    """SHA-512 of the decimal user id, the value compared against the plist keys."""
+    """10진수 user id의 SHA-512. plist 키와 비교하는 값이다."""
 
     return hashlib.sha512(str(user_id).encode("ascii")).hexdigest()
 
 
 def plist_report(plists: Iterable[Path] | None = None) -> dict[str, int]:
-    """Counts only — never the identifiers themselves."""
+    """개수만 담는다 — 식별자 자체는 절대 담지 않는다."""
 
     paths = tuple(plists if plists is not None else preference_plists())
     return {

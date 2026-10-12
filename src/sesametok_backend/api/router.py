@@ -1,7 +1,7 @@
-"""A tiny path router for the loopback API.
+"""루프백 API용 작은 경로 라우터.
 
-Patterns use ``{name}`` segments (e.g. ``/v1/rooms/{chat_id}/messages``). No
-third-party framework is involved; the route table is explicit and greppable.
+패턴은 ``{name}`` 세그먼트를 쓴다(예: ``/v1/rooms/{chat_id}/messages``). 서드파티
+프레임워크는 쓰지 않는다. 라우트 테이블은 명시적이고 grep하기 쉽다.
 """
 
 from __future__ import annotations
@@ -46,13 +46,13 @@ class Request:
 
     def json(self) -> dict:
         if not self.body:
-            raise bad_request("a JSON object body is required")
+            raise bad_request("JSON 객체 본문이 필요합니다")
         try:
             payload = json.loads(self.body.decode("utf-8"))
         except (UnicodeDecodeError, ValueError) as exc:
-            raise bad_request(f"body is not valid JSON: {exc}") from exc
+            raise bad_request(f"본문이 올바른 JSON이 아닙니다: {exc}") from exc
         if not isinstance(payload, dict):
-            raise bad_request("body must be a JSON object")
+            raise bad_request("본문은 JSON 객체여야 합니다")
         return payload
 
 
@@ -110,7 +110,7 @@ class Router:
             raise ApiError(
                 405,
                 "method_not_allowed",
-                f"{method} is not allowed here; try: {', '.join(sorted(allowed))}",
+                f"{method} 메서드는 여기서 허용되지 않습니다; 사용 가능: {', '.join(sorted(allowed))}",
             )
         raise _missing(path)
 
@@ -118,4 +118,4 @@ class Router:
 def _missing(path: str):
     from .errors import not_found
 
-    return not_found(f"no route for {path}", "route_not_found")
+    return not_found(f"{path}에 해당하는 라우트가 없습니다", "route_not_found")

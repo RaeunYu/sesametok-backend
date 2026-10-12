@@ -35,7 +35,7 @@ def test_non_empty_wal_mtime_counts_as_newer(tmp_path: Path) -> None:
     root_b = tmp_path / "b"
     _touch(root_a / NAME_A, 1_000)
     _touch(root_b / NAME_A, 1_100)
-    _touch(root_a / f"{NAME_A}-wal", 5_000, size=128)  # committed frames pending
+    _touch(root_a / f"{NAME_A}-wal", 5_000, size=128)  # 커밋된 프레임이 남아 있음
 
     found = store.discover_databases((root_a, root_b))
 
@@ -67,9 +67,9 @@ def test_distinct_names_are_all_returned(tmp_path: Path) -> None:
 
 def test_non_matching_names_are_ignored(tmp_path: Path) -> None:
     _touch(tmp_path / NAME_A, 1_000)
-    _touch(tmp_path / ("a" * 77), 1_000)      # too short
-    _touch(tmp_path / ("a" * 79), 1_000)      # too long
-    _touch(tmp_path / ("z" * 78), 1_000)      # not hex
+    _touch(tmp_path / ("a" * 77), 1_000)      # 너무 짧음
+    _touch(tmp_path / ("a" * 79), 1_000)      # 너무 김
+    _touch(tmp_path / ("z" * 78), 1_000)      # 16진수가 아님
     _touch(tmp_path / f"{NAME_A}-wal", 1_000)
     _touch(tmp_path / f"{NAME_A}-shm", 1_000)
 

@@ -1,8 +1,8 @@
-"""Launcher tests: plist generation, launchctl wrappers, CLI lifecycle.
+"""런처 테스트: plist 생성, launchctl 래퍼, CLI 수명주기.
 
-Nothing here runs the real ``launchctl`` or writes outside a temporary
-directory. ``FakeLaunchctl`` is an in-memory substitute for the runner seam, and
-every plist path comes from the ``env`` fixture (or *tmp_path*).
+여기서는 실제 ``launchctl``을 실행하거나 임시 디렉터리 밖에 쓰지 않는다.
+``FakeLaunchctl``은 러너 이음매를 대신하는 메모리 내 대체물이며, 모든 plist 경로는
+``env`` 픽스처(또는 *tmp_path*)에서 온다.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ NOT_FOUND = f'Could not find service "{LAUNCHD_LABEL}" in domain for user gui: 5
 
 
 class FakeLaunchctl:
-    """In-memory ``launchctl``: records argv and models load/run state."""
+    """메모리 내 ``launchctl``: argv를 기록하고 로드/실행 상태를 모델링한다."""
 
     def __init__(
         self,
@@ -76,7 +76,7 @@ def _settings(tmp_path: Path) -> Settings:
     return Settings(data_dir=tmp_path / "data", log_dir=tmp_path / "logs")
 
 
-# ------------------------------------------------------------------ plist content
+# ----------------------------------------------------------------------- plist 내용
 
 
 def test_render_plist_has_the_full_contract(tmp_path: Path) -> None:
@@ -112,7 +112,7 @@ def test_install_plist_writes_parseable_file(tmp_path: Path) -> None:
     assert settings.log_dir.is_dir()
 
 
-# ------------------------------------------------------------------------ guard
+# --------------------------------------------------------------------------- 가드
 
 
 def test_plist_guard_rejects_machine_paths(monkeypatch) -> None:
@@ -135,7 +135,7 @@ def test_plist_guard_honours_explicit_override(monkeypatch) -> None:
     assert launcher.plist_path_is_allowed(Path("/opt/elsewhere/agent.plist")) is True
 
 
-# --------------------------------------------------------------- launchctl verbs
+# ------------------------------------------------------------------ launchctl 명령
 
 
 def test_launchagent_generates_the_documented_command_shapes(tmp_path: Path) -> None:
@@ -197,7 +197,7 @@ def test_parse_launchctl_print_handles_samples() -> None:
     assert parse_launchctl_print("") == (None, None)
 
 
-# ------------------------------------------------------------------ CLI lifecycle
+# ----------------------------------------------------------------------- CLI 수명주기
 
 
 def test_cli_install_writes_plist_and_bootstraps(env, monkeypatch, capsys) -> None:
@@ -211,8 +211,8 @@ def test_cli_install_writes_plist_and_bootstraps(env, monkeypatch, capsys) -> No
     assert plistlib.loads(plist.read_bytes())["Label"] == LAUNCHD_LABEL
     assert "bootstrap" in fake.verbs()
     out = capsys.readouterr().out
-    assert "grant target: " + diagnostics.python_executable() in out
-    assert "Full Disk Access" in out
+    assert "권한 부여 대상: " + diagnostics.python_executable() in out
+    assert "전체 디스크 접근 권한" in out
 
 
 def test_cli_uninstall_bootouts_and_removes_plist(env, monkeypatch, capsys) -> None:
@@ -224,7 +224,7 @@ def test_cli_uninstall_bootouts_and_removes_plist(env, monkeypatch, capsys) -> N
 
     assert not (env / "agent.plist").exists()
     assert "bootout" in fake.verbs()
-    assert "data left untouched" in capsys.readouterr().out
+    assert "데이터는 그대로 두었습니다" in capsys.readouterr().out
 
 
 def test_cli_start_is_idempotent_when_already_running(env, monkeypatch, capsys) -> None:
@@ -240,7 +240,7 @@ def test_cli_start_is_idempotent_when_already_running(env, monkeypatch, capsys) 
     assert cli.main(["start"]) == 0
 
     assert started == []
-    assert "already running" in capsys.readouterr().out
+    assert "이미 실행 중입니다" in capsys.readouterr().out
 
 
 def test_cli_start_bootstraps_and_waits_until_running(env, monkeypatch, capsys) -> None:
@@ -250,7 +250,7 @@ def test_cli_start_bootstraps_and_waits_until_running(env, monkeypatch, capsys) 
     assert cli.main(["start"]) == 0
 
     assert fake.verbs().count("bootstrap") == 1
-    assert "started" in capsys.readouterr().out
+    assert "시작되었습니다" in capsys.readouterr().out
     assert (env / "agent.plist").is_file()
 
 
@@ -260,7 +260,7 @@ def test_cli_start_reports_a_bootstrap_failure(env, monkeypatch, capsys) -> None
 
     assert cli.main(["start"]) == 1
 
-    assert "could not start the agent" in capsys.readouterr().err
+    assert "에이전트를 시작하지 못했습니다" in capsys.readouterr().err
 
 
 def test_cli_stop_when_not_running_is_safe(env, monkeypatch, capsys) -> None:
@@ -270,7 +270,7 @@ def test_cli_stop_when_not_running_is_safe(env, monkeypatch, capsys) -> None:
     assert cli.main(["stop"]) == 0
 
     out = capsys.readouterr().out
-    assert "not running" in out
+    assert "실행 중이 아닙니다" in out
     assert "bootout" not in fake.verbs()
 
 
@@ -282,7 +282,7 @@ def test_cli_stop_bootouts_a_running_agent(env, monkeypatch, capsys) -> None:
     assert cli.main(["stop"]) == 0
 
     assert "bootout" in fake.verbs()
-    assert "stopped" in capsys.readouterr().out
+    assert "중지되었습니다" in capsys.readouterr().out
 
 
 def test_cli_restart_bootouts_then_bootstraps_once(env, monkeypatch, capsys) -> None:
@@ -295,7 +295,7 @@ def test_cli_restart_bootouts_then_bootstraps_once(env, monkeypatch, capsys) -> 
     verbs = fake.verbs()
     assert verbs.count("bootstrap") == 1
     assert verbs.index("bootout") < verbs.index("bootstrap")
-    assert "restarted" in capsys.readouterr().out
+    assert "재시작되었습니다" in capsys.readouterr().out
 
 
 def test_cli_refuses_to_touch_a_plist_outside_the_allowed_locations(
@@ -309,4 +309,4 @@ def test_cli_refuses_to_touch_a_plist_outside_the_allowed_locations(
     assert cli.main(["install"]) == 1
 
     assert fake.calls == []
-    assert "refusing to manage" in capsys.readouterr().err
+    assert "관리를 거부합니다" in capsys.readouterr().err

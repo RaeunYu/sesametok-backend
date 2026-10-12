@@ -40,6 +40,8 @@ macOS에 설치·로그인된 **카카오톡 데스크톱 앱**을 데이터 소
 
 ## 설치
 
+### 1) 패키지 설치
+
 ```bash
 # 개발용 (저장소 안에 venv)
 python3 -m venv .venv
@@ -50,8 +52,60 @@ python3 -m venv ~/.local/share/sesametok-backend/venv
 ~/.local/share/sesametok-backend/venv/bin/pip install .
 ```
 
-`bin/sesametok-backend`는 venv를 활성화하지 않고 실행하는 얇은 래퍼입니다.
-`SESAMETOK_VENV`로 venv 경로를 지정할 수 있고, 기본은 저장소의 `./.venv`입니다.
+`pip install`은 `.venv/bin/sesametok-backend` 콘솔 스크립트를 만듭니다. 이 경로는 **venv를 활성화한
+셸에서만** `PATH`에 들어가므로, 활성화하지 않은 터미널에서는 아래와 같이 나옵니다.
+
+```
+zsh: command not found: sesametok-backend
+```
+
+### 2) `sesametok-backend` 명령을 PATH에 등록
+
+저장소의 `bin/sesametok-backend`는 **venv를 활성화하지 않고도 동작하는 얇은 래퍼**입니다.
+`PATH`에 등록해 두면 어느 터미널에서든 그대로 쓸 수 있습니다.
+
+```bash
+cd /path/to/sesametok-backend          # 저장소 루트
+echo "export PATH=\"$PWD/bin:\$PATH\"" >> ~/.zshrc
+source ~/.zshrc
+```
+
+다른 방법도 있습니다.
+
+| 방법 | 명령 | 특징 |
+|---|---|---|
+| 저장소 `bin/`을 PATH에 추가 | 위 `~/.zshrc` 설정 | **권장** · 터미널마다 활성화 불필요 |
+| venv 활성화 | `source .venv/bin/activate` | 그 터미널 세션에서만 유효 |
+| 래퍼 직접 실행 | `./bin/sesametok-backend status` | 설정 없이 즉시 사용 |
+| 사용자 bin에 심볼릭 링크 | `ln -sf "$PWD/bin/sesametok-backend" /opt/homebrew/bin/` | 이미 `PATH`에 있는 디렉터리 활용 |
+
+래퍼는 venv를 다음 순서로 찾습니다: `SESAMETOK_VENV` → 저장소의 `./.venv` →
+`~/.local/share/sesametok-backend/venv`.
+
+### 3) 설치 확인
+
+```bash
+sesametok-backend --version    # → sesametok-backend 0.1.0
+sesametok-backend status       # 실행/권한 상태 + 권한이 없으면 부여할 실행 파일 경로
+```
+
+`command not found`가 계속 나오면 `~/.zshrc` 반영 여부(`source ~/.zshrc`)와 래퍼의 실행 권한
+(`ls -l bin/sesametok-backend`)을 확인하세요.
+
+### 4) 첫 실행 전 준비
+
+1. **권한 부여** — 전체 디스크 접근(읽기)과 손쉬운 사용(발신)이 필요합니다.
+   `sesametok-backend permissions` / `sesametok-backend permissions --accessibility`로 설정 창을 열고,
+   `status`가 알려주는 **실행 파일 경로**에 부여하세요(아래 "권한" 항목).
+2. **아카이브 키 백업** — 최초 기동 시 키가 생성되어 로그인 키체인에 저장되고 화면에 1회 표시됩니다.
+   반드시 별도로 보관하세요(아래 "첫 실행에서 반드시 할 일: 아카이브 키 백업").
+3. **첫 기동은 느릴 수 있습니다** — 계정 식별이 SHA-512 역추적으로 넘어가면 수십 초가 걸립니다.
+   성공하면 캐시되어 다음 기동부터는 즉시 끝납니다.
+4. **개발 실행과 launchd 실행은 권한 대상이 다릅니다** — `foreground`는 터미널(또는 venv python)에,
+   `start`/`install`은 plist의 `ProgramArguments`에 적힌 절대 경로 python에 권한이 귀속됩니다.
+   실행 방법을 바꾸면 권한을 다시 부여해야 할 수 있습니다.
+5. **저장소를 옮기면** venv를 다시 만들어야 합니다(`./.venv` 경로가 바뀌면 콘솔 스크립트와 TCC
+   권한이 모두 무효가 됩니다).
 
 ---
 

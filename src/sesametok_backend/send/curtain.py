@@ -1,23 +1,23 @@
-"""The input-blocking curtain.
+"""입력 차단 커튼.
 
-Bringing KakaoTalk forward for an image paste or a real double-click means the
-user's next keystroke could land in the wrong application. While the curtain is
-up, a session-level ``CGEventTap`` swallows user input and only lets through
-events this process synthesised (tagged in ``kCGEventSourceUserData``).
+이미지 붙여넣기나 실제 더블클릭을 위해 카카오톡을 앞으로 가져오면, 사용자의 다음
+키 입력이 엉뚱한 애플리케이션에 들어갈 수 있다. 커튼이 올라와 있는 동안 세션 수준
+``CGEventTap``이 사용자 입력을 삼키고, 이 프로세스가 직접 합성한 이벤트
+(``kCGEventSourceUserData``에 태깅됨)만 통과시킨다.
 
-Three rules are load-bearing:
+세 가지 규칙이 핵심을 지탱한다:
 
-* **The curtain is never invisible.** Swallowed keys are discarded, not queued, so
-  silently blocking input would be unsafe. If it cannot be shown, ``show()``
-  returns ``False`` and the caller must not take the visible path.
-* **The window must not become key.** If our process activates, KakaoTalk loses
-  frontmost and the paste dies.
-* **All AppKit work happens on the main thread.** ``show``/``hide`` marshal there
-  and wait for the display acknowledgement before proceeding.
+* **커튼은 결코 보이지 않는 상태가 되지 않는다.** 삼켜진 키는 큐에 쌓이지 않고
+  버려지므로, 조용히 입력을 차단하는 것은 안전하지 않다. 커튼을 표시할 수 없으면
+  ``show()``가 ``False``를 반환하며, 호출자는 보이는 경로로 진행해서는 안 된다.
+* **창이 key가 되어서는 안 된다.** 우리 프로세스가 활성화되면 카카오톡이 최전면
+  자리를 잃고 붙여넣기가 실패한다.
+* **모든 AppKit 작업은 메인 스레드에서 일어난다.** ``show``/``hide``는 메인
+  스레드로 전달하고, 진행하기 전에 화면 표시 확인을 기다린다.
 
-Status: implemented to spec, not yet verified on screen (needs Accessibility
-permission and a live send). Cancel is keyboard-first (Esc); the window ignores
-the mouse, so a clickable cancel button is intentionally absent — see ADR-014.
+상태: 명세대로 구현되었으나 아직 화면에서 검증되지 않았다(손쉬운 사용 권한과 실제
+전송이 필요하다). 취소는 키보드 우선(Esc)이다. 창은 마우스를 무시하므로 클릭 가능한
+취소 버튼은 의도적으로 없다 — ADR-014 참조.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ logger = logging.getLogger("sesametok_backend.send.curtain")
 OVERLAY_ACK_SECONDS = 0.6
 ACK_POLL_SECONDS = 0.005
 WINDOW_LEVEL = 1_000_000
-EVENT_TAG = 0x5E5A4D  # "SZM" — marks events we synthesised ourselves
+EVENT_TAG = 0x5E5A4D  # "SZM" — 우리가 직접 합성한 이벤트임을 표시한다
 
 SWALLOWED_EVENTS = (
     "kCGEventKeyDown",
@@ -54,7 +54,7 @@ MainDispatcher = Callable[[Callable[[], None]], None]
 
 
 def _default_main_dispatcher(work: Callable[[], None]) -> None:
-    """Run *work* on the AppKit main thread, waiting for it to finish."""
+    """*work*를 AppKit 메인 스레드에서 실행하고, 끝날 때까지 기다린다."""
 
     done = threading.Event()
     error: list[BaseException] = []
@@ -62,7 +62,7 @@ def _default_main_dispatcher(work: Callable[[], None]) -> None:
     def wrapped() -> None:
         try:
             work()
-        except BaseException as exc:  # pragma: no cover - main-thread failure
+        except BaseException as exc:  # pragma: no cover - 메인 스레드 실패
             error.append(exc)
         finally:
             done.set()
@@ -71,17 +71,17 @@ def _default_main_dispatcher(work: Callable[[], None]) -> None:
         from PyObjCTools import AppHelper  # type: ignore[import-not-found]
 
         AppHelper.callAfter(wrapped)
-    except Exception as exc:  # pragma: no cover - no AppKit available
-        raise RuntimeError("cannot reach the AppKit main thread") from exc
+    except Exception as exc:  # pragma: no cover - AppKit을 사용할 수 없음
+        raise RuntimeError("AppKit 메인 스레드에 접근할 수 없습니다") from exc
 
-    if not done.wait(2.0):  # pragma: no cover - main thread is wedged
-        raise RuntimeError("the main thread did not respond")
+    if not done.wait(2.0):  # pragma: no cover - 메인 스레드가 멈춤
+        raise RuntimeError("메인 스레드가 응답하지 않았습니다")
     if error:  # pragma: no cover
         raise error[0]
 
 
 class Curtain:
-    """A non-activating overlay plus an input-swallowing event tap."""
+    """활성화를 가로채지 않는 오버레이와 입력을 삼키는 이벤트 탭."""
 
     def __init__(
         self,
@@ -102,7 +102,7 @@ class Curtain:
         self._run_loop_source: Any = None
         self._framework_cache: Any = None
 
-    # ------------------------------------------------------------- state
+    # ------------------------------------------------------------- 상태
 
     def _framework(self) -> Any:
         if self._framework_cache is None:
@@ -111,7 +111,7 @@ class Curtain:
 
     @property
     def armed(self) -> bool:
-        """True from the moment ``show`` starts until ``hide`` finishes."""
+        """``show``가 시작된 순간부터 ``hide``가 끝날 때까지 True."""
 
         return self._armed.is_set()
 
@@ -122,10 +122,10 @@ class Curtain:
     def reset_cancel(self) -> None:
         self._cancelled.clear()
 
-    # ------------------------------------------------------------- control
+    # ------------------------------------------------------------- 제어
 
     def show(self) -> bool:
-        """Arm, display, and confirm the overlay. ``False`` means do not proceed."""
+        """오버레이를 무장하고, 표시하고, 확인한다. ``False``는 진행하지 말라는 뜻이다."""
 
         with self._lock:
             self._armed.set()
@@ -134,13 +134,13 @@ class Curtain:
             try:
                 self._dispatch(self._build)
             except Exception as exc:
-                logger.warning("curtain could not be shown: %s", type(exc).__name__)
+                logger.warning("커튼을 표시하지 못했습니다: %s", type(exc).__name__)
                 self._armed.clear()
                 return False
 
             displayed = self._shown.wait(self._ack_seconds)
             if not displayed:
-                logger.warning("curtain display was not acknowledged")
+                logger.warning("커튼 표시가 확인되지 않았습니다")
                 self._armed.clear()
                 self._safe_teardown()
                 return False
@@ -154,13 +154,13 @@ class Curtain:
     def _safe_teardown(self) -> None:
         try:
             self._dispatch(self._teardown)
-        except Exception as exc:  # a stuck overlay must not trap the user
-            logger.warning("curtain teardown failed: %s", type(exc).__name__)
+        except Exception as exc:  # 멈춘 오버레이가 사용자를 가두어서는 안 된다
+            logger.warning("커튼 해제에 실패했습니다: %s", type(exc).__name__)
 
-    # ------------------------------------------------- main-thread bodies
+    # ------------------------------------------------- 메인 스레드 본문
 
     def _build(self) -> None:
-        """Runs on the main thread."""
+        """메인 스레드에서 실행된다."""
 
         framework = self._framework()
         try:
@@ -173,7 +173,7 @@ class Curtain:
             raise
 
     def _teardown(self) -> None:
-        """Runs on the main thread."""
+        """메인 스레드에서 실행된다."""
 
         self._teardown_on_main()
 
@@ -203,10 +203,10 @@ class Curtain:
             self._window = None
         self._shown.clear()
 
-    # ------------------------------------------------------- event handling
+    # ------------------------------------------------------- 이벤트 처리
 
     def _on_event(self, _proxy, event_type, event, _refcon):
-        """Return ``None`` to swallow, or the event to let it through."""
+        """삼키려면 ``None``을, 통과시키려면 이벤트를 반환한다."""
 
         if not self._armed.is_set():
             return event
@@ -217,11 +217,11 @@ class Curtain:
         except Exception:
             tag = 0
         if tag == EVENT_TAG:
-            return event  # our own synthesised keystroke/click
+            return event  # 우리가 합성한 키 입력/클릭
 
         if framework_is_escape(framework, event_type, event):
             self._cancelled.set()
-        # Everything else the user pressed is swallowed, not queued.
+        # 그 밖에 사용자가 누른 것은 모두 큐에 쌓지 않고 삼킨다.
         return None
 
 
@@ -229,7 +229,7 @@ ESCAPE_KEYCODE = 53
 
 
 def framework_is_escape(framework: Any, event_type: Any, event: Any) -> bool:
-    """True only for a key-down of Esc — the documented cancel gesture."""
+    """Esc의 key-down에만 True — 문서화된 취소 제스처."""
 
     if event_type != framework.kCGEventKeyDown:
         return False
@@ -243,7 +243,7 @@ def framework_is_escape(framework: Any, event_type: Any, event: Any) -> bool:
 
 
 def _make_panel(framework: Any) -> Any:
-    """A non-activating, mouse-ignoring, always-on-top overlay panel."""
+    """활성화를 가로채지 않고, 마우스를 무시하며, 항상 맨 위에 있는 오버레이 패널."""
 
     NSWindow = framework.NSWindow
     style = (
@@ -292,7 +292,7 @@ def _install_tap(framework: Any, callback: Callable) -> tuple[Any, Any]:
         None,
     )
     if tap is None:
-        raise RuntimeError("the event tap could not be created")
+        raise RuntimeError("이벤트 탭을 만들 수 없습니다")
 
     source = framework.CFMachPortCreateRunLoopSource(None, tap, 0)
     run_loop = framework.CFRunLoopGetCurrent()
@@ -302,7 +302,7 @@ def _install_tap(framework: Any, callback: Callable) -> tuple[Any, Any]:
 
 
 def _load_frameworks() -> Any:
-    """Import the AppKit/Quartz surface the curtain needs."""
+    """커튼에 필요한 AppKit/Quartz 표면을 임포트한다."""
 
     from types import SimpleNamespace
 

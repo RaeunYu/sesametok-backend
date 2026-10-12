@@ -1,11 +1,11 @@
-"""Polling orchestration (thread B).
+"""폴링 오케스트레이션(스레드 B).
 
-Each poll re-reads ``cursor − lookback`` so late arrivals, edits, and room renames
-are caught. The very first poll is a bounded backfill and deliberately emits
-**no** events: backfilled history is not "new". Failures never kill the thread;
-they raise a degraded state and back off.
+각 폴링은 ``cursor − lookback`` 부터 다시 읽어 늦게 도착한 메시지, 수정, 방 이름
+변경을 잡아낸다. 최초 폴링은 범위가 제한된 백필이며 의도적으로 이벤트를
+**전혀** 내보내지 않는다. 백필된 기록은 "새 것"이 아니기 때문이다. 실패가
+스레드를 죽이는 일은 없으며, 성능 저하 상태를 기록하고 백오프한다.
 
-The poller is the only writer for messages, rooms, and events.
+폴러는 메시지, 방, 이벤트의 유일한 작성자다.
 """
 
 from __future__ import annotations
@@ -93,8 +93,8 @@ class Poller(threading.Thread):
         self.bus = bus
         self.source = source
         self.stats = PollStats()
-        # SQLite connections are thread-affine, so the poller opens its own
-        # connection on first use inside its own thread.
+        # SQLite 연결은 스레드에 귀속되므로, 폴러는 자신의 스레드 안에서 처음
+        # 사용할 때 자신의 연결을 연다.
         self._archive_factory = archive_factory
         self._archive_instance: Archive | None = None
         self._clock = clock
@@ -104,7 +104,7 @@ class Poller(threading.Thread):
         self._paused = threading.Event()
         self._last_prune: float | None = None
 
-    # ------------------------------------------------------------- archive
+    # ------------------------------------------------------------- 아카이브
 
     @property
     def archive(self) -> Archive:
@@ -117,10 +117,10 @@ class Poller(threading.Thread):
             self._archive_instance.close()
             self._archive_instance = None
 
-    # ------------------------------------------------------------- controls
+    # ------------------------------------------------------------- 제어
 
     def trigger(self) -> None:
-        """Ask the loop to poll immediately (used by ``POST /v1/sync``)."""
+        """루프에 즉시 폴링하도록 요청한다(``POST /v1/sync`` 에서 사용)."""
 
         self._wake.set()
 
@@ -143,11 +143,11 @@ class Poller(threading.Thread):
     def stopping(self) -> bool:
         return self._stop.is_set()
 
-    # ------------------------------------------------------------------ run
+    # ------------------------------------------------------------------ 실행
 
     def run(self) -> None:
         logger.info(
-            "poller started: every %.1fs, lookback %ds",
+            "폴러 시작: %.1f초마다, lookback %d초",
             self.settings.poll_seconds,
             self.settings.lookback_seconds,
         )
@@ -159,11 +159,11 @@ class Poller(threading.Thread):
                     continue
                 try:
                     self.poll_once()
-                except Exception as exc:  # keep the thread alive, report degraded
+                except Exception as exc:  # 스레드를 살려 두고 성능 저하를 보고한다
                     self.stats.consecutive_failures += 1
                     self.stats.last_error = type(exc).__name__
                     logger.warning(
-                        "poll failed (%s); backing off %.0fs", type(exc).__name__, backoff
+                        "폴링 실패 (%s); %.0f초 백오프한다", type(exc).__name__, backoff
                     )
                     self._stop.wait(min(backoff, MAX_BACKOFF_SECONDS))
                     backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
@@ -176,9 +176,9 @@ class Poller(threading.Thread):
                 self._wake.wait(timeout=self.settings.poll_seconds)
         finally:
             self.close()
-            logger.info("poller stopped")
+            logger.info("폴러 중지됨")
 
-    # -------------------------------------------------------------- one poll
+    # -------------------------------------------------------------- 폴링 1회
 
     def poll_once(self) -> PollResult:
         started = self._monotonic()
@@ -201,7 +201,7 @@ class Poller(threading.Thread):
         if backfill and self.settings.backfill_max > 0:
             if len(messages) > self.settings.backfill_max:
                 logger.info(
-                    "backfill capped: %d messages, keeping the newest %d",
+                    "백필 상한 적용: 메시지 %d개 중 최신 %d개만 유지한다",
                     len(messages),
                     self.settings.backfill_max,
                 )
@@ -230,7 +230,7 @@ class Poller(threading.Thread):
 
         if backfill:
             logger.info(
-                "initial backfill stored %d messages, %d rooms (no events)",
+                "최초 백필로 메시지 %d개, 방 %d개를 저장했다(이벤트 없음)",
                 len(diff.created),
                 len(snapshot.rooms),
             )
@@ -270,9 +270,9 @@ class Poller(threading.Thread):
             now=rfc3339(now),
         )
         if removed:
-            logger.info("pruned %d expired event(s)", removed)
+            logger.info("만료된 이벤트 %d개를 정리했다", removed)
 
-    # --------------------------------------------------------------- health
+    # --------------------------------------------------------------- 상태
 
     def health(self) -> dict:
         return {

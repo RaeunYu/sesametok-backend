@@ -1,8 +1,7 @@
-"""Curtain tests.
+"""커튼 테스트.
 
-The on-screen appearance needs a real session, but the acknowledgement rule, the
-fail-closed behaviour, and the event-swallowing policy can all be exercised with a
-fake framework.
+화면에 실제로 나타나는 모습은 실제 세션이 필요하지만, 표시 확인 규칙, 실패 시
+닫히는(fail-closed) 동작, 이벤트 삼키기 정책은 가짜 프레임워크로 모두 검증할 수 있다.
 """
 
 from __future__ import annotations
@@ -96,7 +95,7 @@ def fake_framework(*, escape_keycode: int = 53) -> SimpleNamespace:
 
     for name in curtain_module.SWALLOWED_EVENTS:
         setattr(framework, name, name)
-    # Use the same tokens the tests pass as event types.
+    # 테스트가 이벤트 타입으로 넘기는 것과 같은 토큰을 쓴다.
     framework.kCGEventKeyDown = KEY_DOWN
     framework.kCGEventKeyUp = KEY_UP
     framework.kCFRunLoopCommonModes = "common"
@@ -149,7 +148,7 @@ def test_show_is_armed_before_it_displays() -> None:
 
     def dispatch(work):
         seen.append(curtain.armed)
-        # Deliberately do not run the work: display never completes.
+        # 일부러 work를 실행하지 않는다. 표시가 끝나지 않는다.
 
     framework = fake_framework()
     curtain = Curtain(
@@ -157,14 +156,14 @@ def test_show_is_armed_before_it_displays() -> None:
     )
 
     assert curtain.show() is False
-    # The armed flag was already set when display started (the documented rule).
+    # 표시가 시작될 때 이미 armed 플래그가 켜져 있었다(문서화된 규칙).
     assert seen[0] is True
     assert curtain.armed is False
 
 
 def test_show_fails_closed_when_display_raises() -> None:
     def dispatch(work):
-        raise RuntimeError("no main thread")
+        raise RuntimeError("메인 스레드 없음")
 
     framework = fake_framework()
     curtain = Curtain(

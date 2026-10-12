@@ -70,7 +70,7 @@ def test_successful_delivery_advances_cursor(tmp_path: Path) -> None:
 
     delivered = dispatcher.dispatch_once(now=time.time())
 
-    assert delivered == 2  # two message.created events
+    assert delivered == 2  # message.created 이벤트 두 개
     archive = factory()
     try:
         hook = archive.get_webhook("hook-1")
@@ -105,7 +105,7 @@ def test_unsubscribed_kinds_are_skipped_without_delivery(tmp_path: Path) -> None
     assert [json.loads(call[1])["kind"] for call in recorder.calls] == ["message.created"]
     archive = factory()
     try:
-        # The cursor still advances past the filtered event.
+        # 걸러낸 이벤트를 지나서도 커서는 계속 나아간다.
         assert archive.get_webhook("hook-1")["cursor_seq"] == archive.latest_seq()
     finally:
         archive.close()
@@ -128,7 +128,7 @@ def test_failure_keeps_the_cursor_and_records_the_error(tmp_path: Path) -> None:
     finally:
         archive.close()
 
-    # A retry before the backoff elapses must not call the sender again.
+    # 백오프가 지나기 전의 재시도는 sender를 다시 부르면 안 된다.
     assert dispatcher.dispatch_once(now=100.5) == 0
     assert len(recorder.calls) == 1
 
@@ -145,7 +145,7 @@ def test_retry_after_backoff_succeeds(tmp_path: Path) -> None:
     assert len(recorder.calls) == 2
     archive = factory()
     try:
-        # The cursor passes the delivered event and the filtered one after it.
+        # 커서는 전달된 이벤트와 그 뒤의 걸러낸 이벤트를 모두 지나간다.
         assert archive.get_webhook("hook-1")["cursor_seq"] == archive.latest_seq()
     finally:
         archive.close()

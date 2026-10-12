@@ -1,7 +1,7 @@
-"""Reader tests against a synthetic encrypted database.
+"""합성 암호화 데이터베이스에 대한 리더 테스트.
 
-The fixture contains only invented rooms, users, and messages. Assertions check
-ordering, classification, and normalisation — never real conversation data.
+픽스처에는 지어낸 방, 사용자, 메시지만 들어 있다. 단언은 정렬, 분류, 정규화를
+검사하며 실제 대화 데이터는 절대 다루지 않는다.
 """
 
 from __future__ import annotations
@@ -32,20 +32,20 @@ def reader(connection) -> KakaoReader:
 def test_rooms_exclude_open_chats_and_sort(reader: KakaoReader) -> None:
     rooms = reader.rooms()
     assert [room.chat_id for room in rooms] == ["100", "200", "300", "500"]
-    # open chats are identified via NTChatRoom.linkId -> NTOpenLink.linkId
+    # 오픈채팅은 NTChatRoom.linkId -> NTOpenLink.linkId로 식별한다
     assert reader.open_chat_ids() == {"400"}
 
 
 def test_room_name_priority(reader: KakaoReader) -> None:
     names = {room.chat_id: room.chat_name for room in reader.rooms()}
 
-    # explicit chatName wins over the meta title
+    # 명시된 chatName이 메타 제목보다 우선한다
     assert names["300"] == "Synthetic Team A"
-    # highest revision meta title wins when chatName is empty
+    # chatName이 비어 있으면 리비전이 가장 높은 메타 제목이 이긴다
     assert names["500"] == "Meta Title v2"
-    # 1:1 room falls back to the peer nickname
+    # 1:1 방은 상대 닉네임으로 대체한다
     assert names["100"] == "Peer"
-    # group room joins member nicknames, excluding self
+    # 그룹 방은 자신을 제외한 멤버 닉네임을 이어 붙인다
     assert names["200"] == "Member A, Member B, Member C"
 
 
@@ -58,23 +58,23 @@ def test_chat_type_classification(reader: KakaoReader) -> None:
 
 def test_nickname_priority(reader: KakaoReader) -> None:
     nicknames = reader.nicknames()
-    assert nicknames["500"] == "Peer"       # friendNickName first
-    assert nicknames["501"] == "Member A"   # then displayName
-    assert nicknames["502"] == "Member B"   # then nickName
+    assert nicknames["500"] == "Peer"       # friendNickName 우선
+    assert nicknames["501"] == "Member A"   # 다음 displayName
+    assert nicknames["502"] == "Member B"   # 다음 nickName
     assert nicknames[str(SYNTHETIC_USER_ID)] == "Me"
 
 
 def test_message_count_and_skipped_rows(reader: KakaoReader) -> None:
     messages, skipped = reader.messages()
 
-    assert skipped == 1  # the non-UTF-8 row
+    assert skipped == 1  # UTF-8이 아닌 행
     assert len(messages) == 12
     assert all(message.chat_id != "400" for message in messages)
 
 
 def test_flagged_text_type_stays_text(reader: KakaoReader) -> None:
     by_id = {message.message_id: message for message in reader.messages()[0]}
-    flagged = by_id["300-35"]  # raw type 0x4000 | 1
+    flagged = by_id["300-35"]  # 원시 타입 0x4000 | 1
 
     assert flagged.message_type == "text"
     assert flagged.text == "flagged text"
@@ -84,7 +84,7 @@ def test_flagged_text_type_stays_text(reader: KakaoReader) -> None:
 
 def test_flagged_photo_keeps_the_raw_type(reader: KakaoReader) -> None:
     by_id = {message.message_id: message for message in reader.messages()[0]}
-    flagged = by_id["300-36"]  # raw type 0x4000 | 2
+    flagged = by_id["300-36"]  # 원시 타입 0x4000 | 2
 
     assert flagged.message_type == "text"
     assert flagged.original_message_type == "type_16386"
@@ -117,17 +117,17 @@ def test_feed_classification(reader: KakaoReader) -> None:
     assert feed.is_feed is True
     assert feed.message_type == "type_0"
     assert feed.is_placeholder is False
-    assert feed.text.startswith("{")  # body is preserved, not replaced
+    assert feed.text.startswith("{")  # 본문은 대체되지 않고 보존된다
 
 
 def test_reply_parsing(reader: KakaoReader) -> None:
     by_id = {message.message_id: message for message in reader.messages()[0]}
 
-    assert by_id["100-11"].reply_to_message_id == "100-10"   # attachment key
-    assert by_id["300-32"].reply_to_message_id == "300-30"   # supplement container
-    assert by_id["300-33"].reply_to_message_id == "300-30"   # attachment beats supplement
-    assert by_id["300-34"].reply_to_message_id is None       # self reference
-    assert by_id["200-20"].reply_to_message_id is None       # plain logId ignored
+    assert by_id["100-11"].reply_to_message_id == "100-10"   # attachment 키
+    assert by_id["300-32"].reply_to_message_id == "300-30"   # supplement 컨테이너
+    assert by_id["300-33"].reply_to_message_id == "300-30"   # attachment가 supplement를 이긴다
+    assert by_id["300-34"].reply_to_message_id is None       # 자기 참조
+    assert by_id["200-20"].reply_to_message_id is None       # 평범한 logId는 무시한다
 
 
 def test_sender_resolution(reader: KakaoReader) -> None:

@@ -1,15 +1,15 @@
-"""sesametok-backend: macOS-native KakaoTalk messaging backend.
+"""sesametok-backend: macOS 네이티브 카카오톡 메시징 백엔드.
 
-This package is the project's single local process.
-It owns exactly four responsibilities:
+이 패키지는 프로젝트의 단일 로컬 프로세스다.
+정확히 네 가지 책임을 진다:
 
-* read the logged-in KakaoTalk desktop database (read-only, SQLCipher),
-* archive messages locally and detect changes,
-* expose a loopback-only HTTP/UDS API plus an event stream,
-* drive the KakaoTalk UI through macOS Accessibility to send messages.
+* 로그인된 카카오톡 데스크톱 데이터베이스를 읽는다 (읽기 전용, SQLCipher),
+* 메시지를 로컬에 아카이브하고 변경을 감지한다,
+* loopback 전용 HTTP/UDS API와 이벤트 스트림을 노출한다,
+* macOS 손쉬운 사용을 통해 카카오톡 UI를 구동해 메시지를 보낸다.
 
-It deliberately implements no chat UI and no third-party messenger adapter;
-those are downstream interface projects that consume this API.
+채팅 UI와 서드파티 메신저 어댑터는 의도적으로 구현하지 않는다;
+그것들은 이 API를 소비하는 하위 인터페이스 프로젝트다.
 """
 
 __version__ = "0.1.0"

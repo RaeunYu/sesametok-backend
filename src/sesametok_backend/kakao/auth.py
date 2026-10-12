@@ -1,8 +1,7 @@
-"""Resolving which ``(user_id, uuid)`` owns the local database.
+"""로컬 데이터베이스를 소유한 ``(user_id, uuid)`` 를 찾아낸다.
 
-Candidates are tried in priority order and each one must *prove* itself by
-unlocking the database. The winning pair is cached; the
-passphrase never is.
+후보는 우선순위 순서로 시도하며, 각 후보는 데이터베이스 잠금을 해제하여 스스로를
+*증명*해야 한다. 선택된 조합은 캐시하지만 패스프레이즈는 절대 캐시하지 않는다.
 """
 
 from __future__ import annotations
@@ -38,11 +37,11 @@ class AccountIdentity:
     source: str
 
 
-# ---------------------------------------------------------------------- caching
+# ---------------------------------------------------------------------- 캐싱
 
 
 def read_auth_cache(path: Path) -> AccountIdentity | None:
-    """Read ``{"user_id": ..., "uuid": ...}``; malformed caches are ignored."""
+    """``{"user_id": ..., "uuid": ...}`` 를 읽는다. 잘못된 형식의 캐시는 무시한다."""
 
     raw = read_text(path)
     if not raw:
@@ -67,14 +66,14 @@ def read_auth_cache(path: Path) -> AccountIdentity | None:
 
 
 def write_auth_cache(path: Path, identity: AccountIdentity) -> None:
-    """Persist the identity 0600 via an atomic rename. Never stores the key."""
+    """신원을 0600 권한으로 원자적 이름 바꾸기를 통해 저장한다. 키는 절대 저장하지 않는다."""
 
     payload = {"version": AUTH_CACHE_VERSION, "user_id": identity.user_id, "uuid": identity.uuid}
     atomic_write_text(path, json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def read_external_user_ids(path: Path | None = None) -> list[int]:
-    """User ids from the k-skill cache, if that file happens to exist."""
+    """k-skill 캐시 파일이 존재한다면 그곳의 user id들."""
 
     source = path if path is not None else EXTERNAL_AUTH_CACHE
     raw = read_text(source)
@@ -100,7 +99,7 @@ def read_external_user_ids(path: Path | None = None) -> list[int]:
     return []
 
 
-# ------------------------------------------------------------- reverse lookup
+# ------------------------------------------------------------- 역방향 조회
 
 
 def _scan_range(args: tuple[int, int, frozenset[str]]) -> int | None:
@@ -119,12 +118,12 @@ def reverse_lookup(
     workers: int | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> int | None:
-    """Brute-force the user id whose ``sha512(str(user_id))`` is in *target_hashes*.
+    """``sha512(str(user_id))`` 가 *target_hashes* 에 있는 user id를 무차별 대입한다.
 
-    Expensive by construction; only reached when every cheaper source failed.
-    ``fork`` is preferred when available so workers do not re-import the entry
-    point; this runs during startup, before any worker threads exist. A
-    ``should_stop`` callback lets a signal abort the search promptly.
+    구조적으로 비싼 작업이며, 더 저렴한 모든 경로가 실패했을 때만 도달한다.
+    ``fork`` 를 사용할 수 있으면 그것을 선호하여 워커가 진입점을 다시 임포트하지
+    않게 한다. 이는 워커 스레드가 존재하기 전인 시작 시점에 실행된다.
+    ``should_stop`` 콜백을 통해 시그널이 탐색을 즉시 중단할 수 있다.
     """
 
     targets = frozenset(target_hashes)
@@ -163,7 +162,7 @@ def reverse_lookup(
     return None
 
 
-# ------------------------------------------------------------------- resolution
+# ------------------------------------------------------------------- 해석
 
 
 Verifier = Callable[[int, str], bool]
@@ -183,7 +182,7 @@ def _cheap_candidates(
     plists: tuple[Path, ...] | None,
     external_cache: Path | None,
 ) -> list[tuple[int, str, str]]:
-    """``(user_id, uuid, source)`` pairs in priority order, cheap sources only."""
+    """우선순위 순서의 ``(user_id, uuid, source)`` 쌍. 저렴한 소스만 사용한다."""
 
     ordered: list[tuple[int, str, str]] = []
     seen: set[tuple[int, str]] = set()
@@ -220,12 +219,12 @@ def _reverse_lookup_candidate(
     plists: tuple[Path, ...] | None,
     should_stop: Callable[[], bool] | None,
 ) -> tuple[int, str, str] | None:
-    """The expensive fallback, attempted only after everything else failed."""
+    """비싼 대체 경로로, 다른 모든 방법이 실패한 뒤에만 시도한다."""
 
     targets = set(plist_util.active_account_hashes(plists)) - plist_util.empty_account_hashes()
     if not targets:
         return None
-    logger.info("starting SHA-512 reverse lookup over %d account hash(es)", len(targets))
+    logger.info("%d개의 계정 해시에 대해 SHA-512 역방향 조회를 시작한다", len(targets))
     found = reverse_lookup(targets, should_stop=should_stop)
     return None if found is None else (found, uuid, "reverse-lookup")
 
@@ -242,7 +241,7 @@ def resolve_identity(
     cache: bool = True,
     should_stop: Callable[[], bool] | None = None,
 ) -> AccountIdentity:
-    """Find the account that owns the local database, or raise ``KakaoAuthError``."""
+    """로컬 데이터베이스를 소유한 계정을 찾는다. 실패하면 ``KakaoAuthError`` 를 발생시킨다."""
 
     uuid = uuid_override if uuid_override is not None else device_uuid()
     validate_uuid(uuid)
@@ -253,16 +252,16 @@ def resolve_identity(
         if cache:
             try:
                 write_auth_cache(settings.kakaotalk_auth_cache_path, identity)
-            except OSError as exc:  # pragma: no cover - filesystem dependent
-                logger.warning("could not persist the auth cache: %s", exc)
-        logger.info("resolved KakaoTalk account via %s", source)
+            except OSError as exc:  # pragma: no cover - 파일시스템에 따라 달라짐
+                logger.warning("인증 캐시를 저장할 수 없다: %s", exc)
+        logger.info("%s 경로로 카카오톡 계정을 확인했다", source)
         return identity
 
     for user_id, candidate_uuid, source in _cheap_candidates(
         settings, uuid, plists=plists, external_cache=external_cache
     ):
         if should_stop is not None and should_stop():
-            raise KakaoAuthError("startup was interrupted before the account was resolved")
+            raise KakaoAuthError("계정을 확인하기 전에 시작이 중단되었다")
         if verify(user_id, candidate_uuid):
             return accept(user_id, candidate_uuid, source)
 
@@ -275,8 +274,8 @@ def resolve_identity(
                 return accept(*candidate)
 
     raise KakaoAuthError(
-        "could not determine the KakaoTalk account. Set SESAMETOK_USER_ID to the "
-        "account's user id and retry."
+        "카카오톡 계정을 확인할 수 없다. SESAMETOK_USER_ID를 계정의 user id로 "
+        "설정한 뒤 다시 시도하라."
     )
 
 
@@ -286,7 +285,7 @@ def database_path_for(identity: AccountIdentity, roots=None) -> Path | None:
 
 
 def identity_summary(identity: AccountIdentity) -> dict[str, object]:
-    """Log-safe summary: no identifiers, only the source and key shape."""
+    """로그에 안전한 요약: 식별자 없이 소스와 키 형태만 담는다."""
 
     return {
         "source": identity.source,

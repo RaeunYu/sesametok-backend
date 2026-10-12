@@ -1,15 +1,14 @@
-"""Reading and normalising the KakaoTalk database.
+"""카카오톡 데이터베이스를 읽고 정규화한다.
 
-Everything in this module is deliberately forgiving: a missing table, a missing
-column, or one undecodable row degrades that enrichment only. Rows that cannot be
-decoded are counted, never dumped — the log must not carry conversation data.
+이 모듈의 처리는 모두 의도적으로 관대하다. 테이블이 없거나, 컬럼이 없거나, 행
+하나를 디코딩할 수 없어도 그 보강만 저하된다. 디코딩할 수 없는 행은 세기만 하고
+절대 덤프하지 않는다 — 로그에 대화 데이터가 실려서는 안 된다.
 
-Two project decisions live here:
+여기에는 프로젝트 결정 두 가지가 담겨 있다.
 
-* Open chats are never polled, so their rooms are
-  dropped from the snapshot.
-* Message types this backend cannot represent (images, video, emoticons, …) are
-  stored as a plain text placeholder with the original type preserved (ADR-003).
+* 오픈채팅은 폴링하지 않으므로 그 방들은 스냅샷에서 제외한다.
+* 이 백엔드가 표현할 수 없는 메시지 타입(이미지, 동영상, 이모티콘 등)은 원래
+  타입을 보존한 채 일반 텍스트 자리표시자로 저장한다(ADR-003).
 """
 
 from __future__ import annotations
@@ -31,12 +30,12 @@ DIRECT_TYPES = frozenset({0, 2})
 TEXT_TYPE = 1
 FEED_TYPE = "type_0"
 TYPE_FLAG_MASK = 0x3FFF
-"""Message types carry flag bits above this mask.
+"""메시지 타입은 이 마스크 위에 플래그 비트를 갖는다.
 
-The real database contains ``16385``/``16386`` next to ``1``/``2``: the high bit
-(``0x4000``) is a flag and the low bits are the actual message type. Without
-masking, a flagged *text* message (16385) would be replaced by a placeholder and
-real content would be lost.
+실제 데이터베이스에는 ``1``/``2`` 옆에 ``16385``/``16386`` 이 있다. 상위 비트
+(``0x4000``)는 플래그이고 하위 비트가 실제 메시지 타입이다. 마스킹하지 않으면
+플래그가 붙은 *텍스트* 메시지(16385)가 자리표시자로 대체되어 실제 내용이
+유실된다.
 """
 FEED_KEYS = frozenset({"feedType", "inviter", "member", "leaver", "members"})
 REPLY_KEYS = ("src_logId", "srcLogId", "parentLogId", "src_log_id")
@@ -76,11 +75,11 @@ class Snapshot:
     open_chat_ids: frozenset[str] = field(default_factory=frozenset)
 
 
-# ------------------------------------------------------------------- utilities
+# ------------------------------------------------------------------- 유틸리티
 
 
 def _as_text(value: Any) -> str | None:
-    """Best-effort text from a column that may hold bytes, str, or None."""
+    """bytes, str, None 중 무엇이든 담을 수 있는 컬럼에서 최선을 다해 텍스트를 얻는다."""
 
     if value is None:
         return None
@@ -112,7 +111,7 @@ def _as_int(value: Any) -> int | None:
 
 
 def _is_truthy_link(value: Any) -> bool:
-    """True when a ``linkId`` marks the room as an open-link chat."""
+    """``linkId`` 가 방을 오픈링크 대화로 표시할 때 True."""
 
     if value is None:
         return False
@@ -128,10 +127,10 @@ def _is_truthy_link(value: Any) -> bool:
 
 
 def _decode_body(value: Any) -> str:
-    """Decode a message body, raising on undecodable bytes.
+    """메시지 본문을 디코딩하며, 디코딩할 수 없는 바이트에서는 예외를 발생시킨다.
 
-    Undecodable rows are skipped as a unit and only counted, so the exception is
-    deliberately not swallowed here (see ``KakaoReader.messages``).
+    디코딩할 수 없는 행은 통째로 건너뛰고 개수만 세므로, 여기서는 그 예외를
+    의도적으로 삼키지 않는다(``KakaoReader.messages`` 참고).
     """
 
     if value is None:
@@ -180,7 +179,7 @@ def _walk_for_reply(payload: Any, depth: int = 0) -> int | None:
 
 
 def _reply_target(supplement: Any, attachment: Any, own_log_id: int | None) -> int | None:
-    """``attachment`` wins over ``supplement``; a self reference is not a reply."""
+    """``attachment`` 가 ``supplement`` 보다 우선한다. 자기 참조는 답글이 아니다."""
 
     for source in (attachment, supplement):
         payload = _load_json(source)
@@ -191,7 +190,7 @@ def _reply_target(supplement: Any, attachment: Any, own_log_id: int | None) -> i
 
 
 def epoch_to_rfc3339(value: Any) -> str:
-    """Unix epoch seconds (float allowed) → RFC3339 UTC, truncated to seconds."""
+    """Unix epoch 초(float 허용) → RFC3339 UTC, 초 단위로 절삭."""
 
     seconds = 0
     if isinstance(value, bool):
@@ -222,11 +221,11 @@ def _is_feed(message_type: str, body: str) -> bool:
     return any(key in payload for key in FEED_KEYS)
 
 
-# ---------------------------------------------------------------------- reader
+# ---------------------------------------------------------------------- 리더
 
 
 class KakaoReader:
-    """A read-only view over one account's KakaoTalk database."""
+    """한 계정의 카카오톡 데이터베이스에 대한 읽기 전용 뷰."""
 
     def __init__(self, connection, *, user_id: int) -> None:
         self._con = connection
@@ -238,7 +237,7 @@ class KakaoReader:
         self._link_names: dict[str, str] | None = None
         self._open_chats: set[str] | None = None
 
-    # ------------------------------------------------------------- schema help
+    # ------------------------------------------------------------- 스키마 도우미
 
     def tables(self) -> set[str]:
         if self._tables is None:
@@ -264,7 +263,7 @@ class KakaoReader:
         return table in self.tables()
 
     def _select(self, table: str, wanted: Iterable[str], where: str = "") -> list[tuple]:
-        """Select the intersection of *wanted* and the real columns, tolerantly."""
+        """*wanted* 와 실제 컬럼의 교집합을 관대하게 선택한다."""
 
         if not self.has(table):
             return []
@@ -278,11 +277,11 @@ class KakaoReader:
         try:
             rows = self._con.execute(query).fetchall()
         except sqlcipher.Error as exc:
-            logger.warning("could not read %s (%s)", table, type(exc).__name__)
+            logger.warning("%s 를 읽을 수 없다 (%s)", table, type(exc).__name__)
             return []
         return [tuple(row) for row in rows]
 
-    # -------------------------------------------------------------- enrichment
+    # -------------------------------------------------------------- 보강 정보
 
     def nicknames(self) -> dict[str, str]:
         if self._nicknames is None:
@@ -341,11 +340,11 @@ class KakaoReader:
         return self._link_names
 
     def open_chat_ids(self) -> set[str]:
-        """Chat ids that belong to open chats, which this backend does not poll.
+        """오픈채팅에 속한 chat id들. 이 백엔드는 오픈채팅을 폴링하지 않는다.
 
-        Open-link rooms are marked on ``NTChatRoom.linkId``; ``NTOpenLink`` itself
-        has no ``chatId`` column, so the join is by ``linkId``. The ``NTOpenLink``
-        scan is kept as a fallback for schemas that do expose a chat id.
+        오픈링크 방은 ``NTChatRoom.linkId`` 에 표시된다. ``NTOpenLink`` 자체에는
+        ``chatId`` 컬럼이 없으므로 ``linkId`` 로 연결한다. chat id를 노출하는
+        스키마를 위해 ``NTOpenLink`` 스캔을 대체 경로로 남겨 둔다.
         """
 
         if self._open_chats is None:
@@ -371,7 +370,7 @@ class KakaoReader:
             self._open_chats = ids
         return self._open_chats
 
-    # ------------------------------------------------------------------- rooms
+    # ------------------------------------------------------------------- 방
 
     def raw_rooms(self) -> list[RawRoom]:
         rows = self._select(
@@ -490,7 +489,7 @@ class KakaoReader:
         rooms.sort(key=lambda room: room.chat_id)
         return rooms
 
-    # ---------------------------------------------------------------- messages
+    # ---------------------------------------------------------------- 메시지
 
     def _message_rows(self, since_epoch: int | None) -> list[tuple]:
         wanted = (
@@ -521,7 +520,7 @@ class KakaoReader:
         try:
             rows = self._con.execute(query, params).fetchall()
         except sqlcipher.Error as exc:
-            logger.warning("could not read NTChatMessage (%s)", type(exc).__name__)
+            logger.warning("NTChatMessage를 읽을 수 없다 (%s)", type(exc).__name__)
             return []
         return [(present, tuple(row)) for row in rows]
 
@@ -531,7 +530,7 @@ class KakaoReader:
         since_epoch: int | None = None,
         room_index: dict[str, Room] | None = None,
     ) -> tuple[list[Message], int]:
-        """Normalised messages plus the number of rows skipped for decode errors."""
+        """정규화된 메시지들과 디코딩 오류로 건너뛴 행 수."""
 
         index = room_index if room_index is not None else {
             room.chat_id: room for room in self.rooms()
@@ -562,7 +561,7 @@ class KakaoReader:
             deduped.append(message)
 
         if skipped:
-            logger.warning("skipped %d undecodable message row(s)", skipped)
+            logger.warning("디코딩할 수 없는 메시지 행 %d개를 건너뛰었다", skipped)
         return deduped, skipped
 
     def _normalise(
@@ -577,7 +576,7 @@ class KakaoReader:
         chat_id = str(chat_id_value)
         room = index.get(chat_id)
         if room is None:
-            # An open chat (or a room filtered out) — never surfaced to interfaces.
+            # 오픈채팅이거나 걸러진 방 — 인터페이스에 절대 노출하지 않는다.
             return None
 
         body = _decode_body(values.get("message"))
@@ -593,13 +592,13 @@ class KakaoReader:
         is_placeholder = False
 
         if not is_feed and message_type != "text":
-            # Keep the raw value (flag bits included) so nothing is hidden.
+            # 아무것도 숨기지 않도록 원시 값(플래그 비트 포함)을 보존한다.
             original_type = f"type_{raw_type}" if raw_type is not None else "type_unknown"
             is_placeholder = True
             message_type = "text"
             body = PLACEHOLDER_TEXT
         elif not body:
-            # Text rows without a body carry nothing to show.
+            # 본문이 없는 텍스트 행은 보여줄 내용이 없다.
             return None
 
         author_id = _as_int(values.get("authorId"))
@@ -635,7 +634,7 @@ class KakaoReader:
             is_placeholder=is_placeholder,
         )
 
-    # ---------------------------------------------------------------- snapshot
+    # ---------------------------------------------------------------- 스냅샷
 
     def snapshot(self, *, since_epoch: int | None = None) -> Snapshot:
         rooms = self.rooms()

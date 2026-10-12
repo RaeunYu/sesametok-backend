@@ -1,12 +1,12 @@
-"""Encrypted local archive key: environment override, else the login keychain.
+"""암호화된 로컬 아카이브 키: 환경변수 우선, 그다음 로그인 키체인.
 
-ADR-004 decides this: the SQLCipher archive key is a random 32-byte value stored
-in the macOS login keychain. ``SESAMETOK_ARCHIVE_KEY`` (64 hex chars) takes
-precedence so tests and headless runs work without touching the keychain.
+ADR-004가 정한 사항이다. SQLCipher 아카이브 키는 macOS 로그인 키체인에 저장된
+랜덤 32바이트 값이다. 테스트와 헤드리스 실행이 키체인을 건드리지 않고 동작하도록
+``SESAMETOK_ARCHIVE_KEY`` (16진수 64자)가 우선한다.
 
-There is deliberately no key-file fallback and no plaintext fallback: if the key
-cannot be loaded or stored, startup fails with a clear error instead of silently
-writing an unencrypted archive.
+키 파일 폴백과 평문 폴백은 의도적으로 없다. 키를 불러오거나 저장할 수 없으면
+암호화되지 않은 아카이브를 조용히 기록하는 대신 명확한 오류와 함께 시작에
+실패한다.
 """
 
 from __future__ import annotations
@@ -27,37 +27,37 @@ KEY_HEX_LENGTH = KEY_BYTES * 2
 _HEX = re.compile(rf"^[0-9a-fA-F]{{{KEY_HEX_LENGTH}}}$")
 
 KEY_BACKUP_HELP = (
-    "Store the printed key somewhere safe (a password manager). "
-    "If it is lost the archive cannot be decrypted and has to be rebuilt from "
-    "KakaoTalk; nothing else can recover it."
+    "출력된 키를 안전한 곳(비밀번호 관리자)에 보관하라. "
+    "키를 잃으면 아카이브를 복호화할 수 없어 카카오톡에서 다시 만들어야 하며, "
+    "그 밖의 방법으로는 복구할 수 없다."
 )
 
 
 class ArchiveKeyError(RuntimeError):
-    """The archive key could not be resolved or persisted."""
+    """아카이브 키를 확인하거나 저장할 수 없었다."""
 
 
 def parse_hex_key(value: str) -> bytes:
-    """Accept 64 hex chars, optionally wrapped as ``x'...'``."""
+    """16진수 64자를 받는다. 선택적으로 ``x'...'`` 로 감싼 형태도 허용한다."""
 
     text = value.strip()
     if text.startswith("x'") and text.endswith("'"):
         text = text[2:-1]
     if not _HEX.match(text):
         raise ArchiveKeyError(
-            f"archive key must be {KEY_HEX_LENGTH} hex characters ({KEY_BYTES} bytes)"
+            f"아카이브 키는 16진수 {KEY_HEX_LENGTH}자({KEY_BYTES}바이트)여야 한다"
         )
     return bytes.fromhex(text)
 
 
 def key_to_hex(key: bytes) -> str:
     if len(key) != KEY_BYTES:
-        raise ArchiveKeyError(f"archive key must be {KEY_BYTES} bytes, got {len(key)}")
+        raise ArchiveKeyError(f"아카이브 키는 {KEY_BYTES}바이트여야 하는데 {len(key)}바이트다")
     return key.hex()
 
 
 def pragma_literal(key: bytes) -> str:
-    """SQLCipher raw-key literal: ``x'<hex>'``."""
+    """SQLCipher 로우 키 리터럴: ``x'<hex>'``."""
 
     return f"x'{key_to_hex(key)}'"
 
@@ -73,20 +73,20 @@ class Keychain(Protocol):
 
 
 class SecurityCliKeychain:
-    """Keychain access through ``/usr/bin/security``."""
+    """``/usr/bin/security`` 를 통한 키체인 접근."""
 
     def __init__(self, executable: str = "security") -> None:
         self.executable = executable
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         if shutil.which(self.executable) is None:
-            raise ArchiveKeyError("the macOS `security` tool is not available")
+            raise ArchiveKeyError("macOS `security` 도구를 사용할 수 없다")
         try:
             return subprocess.run(
                 [self.executable, *args], capture_output=True, text=True, timeout=15, check=False
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            raise ArchiveKeyError(f"could not run `security`: {exc}") from exc
+            raise ArchiveKeyError(f"`security`를 실행할 수 없다: {exc}") from exc
 
     def get(self, service: str, account: str) -> bytes | None:
         result = self._run(
@@ -96,7 +96,7 @@ class SecurityCliKeychain:
             return None
         if result.returncode != 0:
             raise ArchiveKeyError(
-                f"could not read the archive key from the keychain: {result.stderr.strip()}"
+                f"키체인에서 아카이브 키를 읽을 수 없다: {result.stderr.strip()}"
             )
         return parse_hex_key(result.stdout)
 
@@ -106,7 +106,7 @@ class SecurityCliKeychain:
         )
         if result.returncode != 0:
             raise ArchiveKeyError(
-                "could not store the archive key in the keychain: "
+                "키체인에 아카이브 키를 저장할 수 없다: "
                 f"{result.stderr.strip()}"
             )
 
@@ -128,7 +128,7 @@ def resolve_archive_key(
     service: str = KEYCHAIN_SERVICE,
     account: str = KEYCHAIN_ACCOUNT,
 ) -> ArchiveKey:
-    """Environment first, then keychain, then generate-and-store."""
+    """환경변수 우선, 다음 키체인, 마지막으로 생성 후 저장."""
 
     if settings.archive_key_hex:
         return ArchiveKey(key=parse_hex_key(settings.archive_key_hex), source="env")

@@ -1,13 +1,11 @@
-"""Runtime diagnosis: does this process have what it needs to work?
+"""런타임 진단: 이 프로세스가 동작에 필요한 것을 갖추었는지 확인한다.
 
-Two macOS permissions matter and both are bound to the responsible executable's
-absolute path:
+macOS 권한 두 가지가 중요하며, 둘 다 책임 프로세스의 절대 경로에 귀속된다:
 
-* *Full Disk Access* — needed to read the KakaoTalk container database.
-* *Accessibility* — needed to drive the KakaoTalk UI when sending.
+* *전체 디스크 접근 권한* — 카카오톡 컨테이너 DB를 읽는 데 필요하다.
+* *손쉬운 사용* — 발신할 때 카카오톡 UI를 구동하는 데 필요하다.
 
-The first-run guide prints exactly which executable must be granted, so nobody
-has to guess.
+첫 실행 안내는 **어느 실행 파일에 권한을 줘야 하는지** 그대로 출력한다. 추측할 필요가 없도록.
 """
 
 from __future__ import annotations
@@ -33,24 +31,24 @@ ACCESSIBILITY_URL = (
 
 
 def python_executable() -> str:
-    """Absolute path of the binary TCC actually binds to — the grant target.
+    """TCC가 실제로 귀속되는 바이너리의 절대 경로 — 권한 부여 대상.
 
-    A venv created from a pyenv interpreter symlinks to a *version-pinned* path,
-    so resolving matters: granting the venv path still stores the resolved target,
-    and a Python upgrade silently invalidates the grant.
+    pyenv 인터프리터로 만든 venv는 *버전이 고정된* 경로를 가리키는 심볼릭 링크다.
+    그래서 resolve가 중요하다: venv 경로에 권한을 줘도 저장되는 것은 resolve된 대상이고,
+    Python을 업그레이드하면 권한이 조용히 무효가 된다.
     """
 
     return str(Path(sys.executable).resolve())
 
 
 def invoked_executable() -> str:
-    """The interpreter path as launched (e.g. ``<venv>/bin/python``)."""
+    """실행에 사용된 인터프리터 경로(예: ``<venv>/bin/python``)."""
 
     return str(Path(sys.executable))
 
 
 def python_is_symlinked() -> bool:
-    """True when the invoked interpreter resolves to a different path."""
+    """실행에 사용된 인터프리터가 다른 경로로 resolve되면 True."""
 
     return invoked_executable() != python_executable()
 
@@ -73,7 +71,7 @@ def kakaotalk_running() -> bool:
 
 
 def accessibility_trusted() -> bool | None:
-    """``True``/``False`` when the framework answers, ``None`` when unavailable."""
+    """프레임워크가 답하면 ``True``/``False``, 확인할 수 없으면 ``None``."""
 
     try:
         from ApplicationServices import AXIsProcessTrusted  # type: ignore[import-not-found]
@@ -107,7 +105,7 @@ def store_root_report(roots: Iterable[Path]) -> list[dict[str, Any]]:
 
 
 def full_disk_access_ok(roots: Iterable[Path]) -> bool:
-    """True when at least one existing store root can be listed."""
+    """존재하는 저장소 루트 중 하나라도 목록을 읽을 수 있으면 True."""
 
     existing = [root for root in roots if root.is_dir()]
     if not existing:
@@ -116,7 +114,7 @@ def full_disk_access_ok(roots: Iterable[Path]) -> bool:
 
 
 def collect(settings: Settings, store_roots: Iterable[Path]) -> dict[str, Any]:
-    """Everything the first-run guide and ``status`` need, with no personal data."""
+    """첫 실행 안내와 ``status``에 필요한 정보. 개인정보는 담지 않는다."""
 
     roots = tuple(store_roots)
     return {
@@ -133,35 +131,34 @@ def collect(settings: Settings, store_roots: Iterable[Path]) -> dict[str, Any]:
 
 
 def permission_guidance(report: dict[str, Any]) -> list[str]:
-    """Human-readable next steps for whatever permission is missing."""
+    """빠진 권한에 대해 사람이 읽고 따라 할 다음 단계를 만든다."""
 
     exe = report.get("python_executable", "?")
     lines: list[str] = []
     if report.get("python_is_symlinked"):
         lines.append(
-            "This interpreter is a symlink; macOS records the resolved binary for "
-            "permissions.\n"
-            f"  launched as: {report.get('invoked_executable', '?')}\n"
-            f"  grant target: {exe}\n"
-            "  Upgrading that Python build invalidates the grant — recreate the venv "
-            "and re-grant if you switch versions."
+            "이 인터프리터는 심볼릭 링크입니다. macOS는 권한을 resolve된 바이너리에 기록합니다.\n"
+            f"  실행에 사용된 경로: {report.get('invoked_executable', '?')}\n"
+            f"  권한 부여 대상: {exe}\n"
+            "  해당 Python 빌드를 업그레이드하면 권한이 무효가 됩니다 — 버전을 바꿨다면 venv를 다시 "
+            "만들고 권한을 다시 부여하세요."
         )
     if not report.get("full_disk_access_ok"):
         lines.append(
-            "Full Disk Access is required to read the KakaoTalk database.\n"
-            f"  Grant it to this executable: {exe}\n"
-            "  System Settings > Privacy & Security > Full Disk Access\n"
-            "  (run `sesametok-backend permissions` to open that pane)"
+            "카카오톡 DB를 읽으려면 전체 디스크 접근 권한이 필요합니다.\n"
+            f"  이 실행 파일에 부여하세요: {exe}\n"
+            "  시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한\n"
+            "  (`sesametok-backend permissions`로 해당 설정 창을 엽니다)"
         )
     if report.get("accessibility_trusted") is False:
         lines.append(
-            "Accessibility is required to send messages through the KakaoTalk UI.\n"
-            f"  Grant it to this executable: {exe}\n"
-            "  System Settings > Privacy & Security > Accessibility\n"
-            "  (run `sesametok-backend permissions --accessibility`)"
+            "카카오톡 UI로 메시지를 보내려면 손쉬운 사용 권한이 필요합니다.\n"
+            f"  이 실행 파일에 부여하세요: {exe}\n"
+            "  시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용\n"
+            "  (`sesametok-backend permissions --accessibility`)"
         )
     if not report.get("kakaotalk_installed"):
-        lines.append("KakaoTalk.app was not found in /Applications.")
+        lines.append("KakaoTalk.app을 /Applications에서 찾을 수 없습니다.")
     elif not report.get("kakaotalk_running"):
-        lines.append("KakaoTalk is installed but not running; no new messages will appear.")
+        lines.append("카카오톡이 설치되어 있지만 실행 중이 아닙니다. 새 메시지가 나타나지 않습니다.")
     return lines

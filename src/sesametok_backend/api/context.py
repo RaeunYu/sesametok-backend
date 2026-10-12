@@ -1,8 +1,7 @@
-"""Shared state handed to every API route.
+"""모든 API 라우트에 전달되는 공유 상태.
 
-The API never imports ``Runtime`` (the runtime imports the API), so live state
-arrives through callables. Archive connections are handed out per request because
-SQLite connections are thread-affine.
+API는 ``Runtime``을 import하지 않는다(런타임이 API를 import한다). 그래서 살아 있는 상태는
+콜러블을 통해 들어온다. SQLite 연결은 스레드에 귀속되므로 아카이브 연결은 요청마다 새로 내준다.
 """
 
 from __future__ import annotations

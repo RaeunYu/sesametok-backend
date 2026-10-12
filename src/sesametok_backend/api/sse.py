@@ -1,4 +1,4 @@
-"""Server-Sent Events rendering."""
+"""Server-Sent Events 렌더링."""
 
 from __future__ import annotations
 

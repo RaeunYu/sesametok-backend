@@ -1,1 +1,1 @@
-"""Sending: target resolution, Accessibility pipeline, and the safety gates."""
+"""전송: 대상 해석, 손쉬운 사용 파이프라인, 그리고 안전 게이트."""

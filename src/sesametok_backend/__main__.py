@@ -1,4 +1,4 @@
-"""``python -m sesametok_backend`` entry point."""
+"""``python -m sesametok_backend`` 진입점."""
 
 from __future__ import annotations
 

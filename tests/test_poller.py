@@ -84,7 +84,7 @@ def archive(tmp_path: Path):
 
 
 def _poller(settings, archive, source, bus=None) -> Poller:
-    """The poller opens its own connection; the fixture connection is for asserts."""
+    """폴러는 자신의 연결을 연다. 픽스처 연결은 검증용이다."""
 
     key = KEY
     return Poller(
@@ -114,7 +114,7 @@ def test_first_poll_backfills_without_events(tmp_path: Path, archive: Archive) -
     assert result.created == 1
     assert result.skipped_rows == 3
     assert archive.count_messages() == 1
-    assert archive.latest_seq() == 0  # backfill never emits events
+    assert archive.latest_seq() == 0  # 백필은 이벤트를 내보내지 않는다
     assert archive.poll_cursor() == NOW
     assert source.since_calls == [NOW - 30 * 86_400]
 
@@ -243,5 +243,5 @@ def test_run_recovers_from_a_failure(tmp_path: Path, archive: Archive) -> None:
 
     assert poller.stats.polls >= 1
     assert poller.stats.consecutive_failures == 0
-    assert source.calls >= 2  # the first call failed, the retry succeeded
+    assert source.calls >= 2  # 첫 호출은 실패했고 재시도는 성공했다
     assert poller.stopping is True

@@ -1,9 +1,9 @@
-"""Synthetic KakaoTalk databases for tests.
+"""테스트용 합성 카카오톡 데이터베이스.
 
-Nothing here touches a real account. The schema mirrors the columns the reader
-depends on, and the database is written with the same PBKDF2-derived passphrase
-the production code computes, so the read path is exercised end to end without a
-KakaoTalk installation.
+여기서는 실제 계정에 접근하지 않는다. 스키마는 리더가 의존하는 컬럼을 그대로
+반영하며, 데이터베이스는 프로덕션 코드가 계산하는 것과 같은 PBKDF2 유도
+패스프레이즈로 기록한다. 따라서 카카오톡 설치 없이 읽기 경로를 종단 간 검증할 수
+있다.
 """
 
 from __future__ import annotations
@@ -59,15 +59,15 @@ def _seed(connection) -> None:
         "INSERT INTO NTChatRoom (chatId, type, chatName, activeMembersCount, "
         "directChatMemberUserId, displayMemberIds, linkId) VALUES (?,?,?,?,?,?,?)",
         [
-            # 100: 1:1 room with no name -> peer nickname
+            # 100: 이름 없는 1:1 방 -> 상대 닉네임
             (100, 2, None, 2, 500, member_blob([500]), 0),
-            # 200: group with no name -> member list
+            # 200: 이름 없는 그룹 -> 멤버 목록
             (200, 3, None, 3, 0, member_blob([SYNTHETIC_USER_ID, 501, 502, 503]), 0),
-            # 300: explicitly named
+            # 300: 이름이 명시된 방
             (300, 3, "Synthetic Team A", 3, 0, member_blob([SYNTHETIC_USER_ID, 501]), 0),
-            # 400: open chat (linkId set) -> excluded from polling
+            # 400: 오픈채팅(linkId 설정됨) -> 폴링에서 제외
             (400, 3, None, 5, 0, member_blob([SYNTHETIC_USER_ID, 501]), 9001),
-            # 500: meta title only
+            # 500: 메타 제목만 있는 방
             (500, 3, None, 4, 0, member_blob([SYNTHETIC_USER_ID, 502, 503]), 0),
         ],
     )
@@ -115,9 +115,9 @@ def _seed(connection) -> None:
              '{"src_log_id": 31}', '{"parentLogId": 30}'),
             (300, 34, 501, TEXT, "self reference", 1767226200.0,
              None, '{"srcLogId": 34}'),
-            # flagged text (0x4000 | 1) must stay text, not become a placeholder
+            # 플래그가 붙은 텍스트(0x4000 | 1)는 자리표시자가 아니라 텍스트로 남아야 한다
             (300, 35, 501, FLAGGED | TEXT, "flagged text", 1767226380.0, None, None),
-            # flagged photo becomes a placeholder with the raw type preserved
+            # 플래그가 붙은 사진은 원시 타입을 보존한 채 자리표시자가 된다
             (300, 36, 501, FLAGGED | PHOTO, None, 1767226440.0, None, None),
             (400, 40, 501, TEXT, "open chat message", 1767226260.0, None, None),
             (500, 50, 502, TEXT, "meta room message", 1767226320.0, None, None),
@@ -131,11 +131,11 @@ def write_synthetic_database(
     user_id: int = SYNTHETIC_USER_ID,
     uuid: str = SYNTHETIC_UUID,
 ) -> Path:
-    """Create an encrypted synthetic database at *path*."""
+    """*path* 에 암호화된 합성 데이터베이스를 생성한다."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlcipher.connect(str(path))
-    # Same convention as production: the 256-hex secure_key is a passphrase.
+    # 프로덕션과 같은 규칙: 256-hex secure_key는 패스프레이즈로 쓴다.
     connection.execute(f"PRAGMA key = '{secure_key(user_id, uuid)}'")
     connection.execute("PRAGMA cipher_compatibility = 3")
     connection.executescript(SCHEMA)
@@ -152,7 +152,7 @@ def write_synthetic_store(
     uuid: str = SYNTHETIC_UUID,
     suffix: str = "",
 ) -> Path:
-    """Create the database under the *derived* file name inside *root*."""
+    """*root* 안에 *유도된* 파일 이름으로 데이터베이스를 생성한다."""
 
     return write_synthetic_database(
         root / f"{database_name(user_id, uuid)}{suffix}", user_id=user_id, uuid=uuid
@@ -165,7 +165,7 @@ def connect_synthetic(
     user_id: int = SYNTHETIC_USER_ID,
     uuid: str = SYNTHETIC_UUID,
 ):
-    """Open a synthetic database directly, mirroring the production PRAGMA order."""
+    """프로덕션의 PRAGMA 순서를 그대로 따라 합성 데이터베이스를 직접 연다."""
 
     connection = sqlcipher.connect(str(path))
     connection.execute(f"PRAGMA key = '{secure_key(user_id, uuid)}'")

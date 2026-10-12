@@ -1,4 +1,4 @@
-"""The route table for the loopback API."""
+"""루프백 API의 라우트 테이블."""
 
 from __future__ import annotations
 

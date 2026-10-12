@@ -19,7 +19,7 @@ def _room(chat_id: str, name: str, *, stamp: str | None = None, kind: str = "gro
     return Room(chat_id, name, kind, stamp)
 
 
-# --------------------------------------------------------------- name matching
+# --------------------------------------------------------------- 이름 매칭
 
 
 def test_member_set_matching_ignores_order() -> None:
@@ -42,7 +42,7 @@ def test_search_query_uses_the_longest_member() -> None:
     assert search_query("Solo Room") == "Solo Room"
 
 
-# ----------------------------------------------------------- name typability
+# ----------------------------------------------------------- 이름 입력 가능성
 
 
 @pytest.mark.parametrize("name", ["normal name", "이름 with spaces", "emoji 🎉 ok"])
@@ -54,12 +54,12 @@ def test_typable_names_pass(name: str) -> None:
 @pytest.mark.parametrize(
     "name",
     [
-        "bad\u200bname",       # zero width space
-        "bad\u00adname",       # soft hyphen
-        "bad\u202ename",       # right-to-left override
-        "bad\u2060name",       # word joiner
-        "bad\ufeffname",       # byte order mark
-        "line\nbreak",         # control character
+        "bad\u200bname",       # 제로 폭 공백
+        "bad\u00adname",       # 소프트 하이픈
+        "bad\u202ename",       # 오른쪽에서 왼쪽으로 쓰기 재정의
+        "bad\u2060name",       # 단어 결합자
+        "bad\ufeffname",       # 바이트 순서 표시
+        "line\nbreak",         # 제어 문자
     ],
 )
 def test_untypable_names_are_rejected(name: str) -> None:
@@ -73,7 +73,7 @@ def test_offenders_are_listed_once() -> None:
     assert untypable_characters("\u200b\u200b") == ["U+200B"]
 
 
-# ------------------------------------------------------------ rank resolution
+# ------------------------------------------------------------ 순위 해석
 
 
 def test_unique_name_gets_rank_zero() -> None:
@@ -147,7 +147,7 @@ def test_untypable_target_name_is_rejected() -> None:
     assert excinfo.value.code == "room_name_not_typable"
 
 
-# ------------------------------------------------------------ error messages
+# ------------------------------------------------------------ 오류 메시지
 
 
 def test_error_messages_carry_the_details() -> None:
@@ -155,19 +155,19 @@ def test_error_messages_carry_the_details() -> None:
     assert "Team" in message and "A, B" in message
 
     busy = format_message("user_busy", n=7)
-    assert "7s" in busy
+    assert "7초" in busy
 
 
 def test_error_payload_shape() -> None:
     error = SendError("accessibility_denied", retryable=False)
     assert error.code == "accessibility_denied"
-    assert "System Settings" in str(error)
+    assert "시스템 설정" in str(error)
 
 
 def test_cancelled_messages_distinguish_the_two_cases() -> None:
-    assert "nothing was sent" in format_message("cancelled")
-    assert "may or may not" in format_message("cancelled_after_paste")
+    assert "아무것도 전송되지 않았습니다" in format_message("cancelled")
+    assert "전송되었을 수도" in format_message("cancelled_after_paste")
 
 
 def test_unconfirmed_warns_against_blind_retry() -> None:
-    assert "double-send" in format_message("unconfirmed")
+    assert "중복 전송" in format_message("unconfirmed")

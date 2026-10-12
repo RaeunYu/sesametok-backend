@@ -24,7 +24,7 @@ USER_ID = 123456789
 
 
 class QuietSource:
-    """A source that always reports an empty snapshot."""
+    """항상 빈 스냅숏을 보고하는 소스."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -129,7 +129,7 @@ def test_unresolvable_identity_is_a_startup_error(env) -> None:
     with pytest.raises(StartupError):
         runtime.start()
 
-    # The lock must not be left behind by a failed start.
+    # 시작에 실패한 뒤 잠금이 남아 있어서는 안 된다.
     assert not settings.lock_path.exists()
 
 

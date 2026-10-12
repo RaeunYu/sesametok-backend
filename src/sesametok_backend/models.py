@@ -1,8 +1,8 @@
-"""Shared DTOs crossing the read → archive → API boundary.
+"""읽기 → 아카이브 → API 경계를 넘는 공유 DTO.
 
-These are plain dataclasses; the API layer renders them to JSON with RFC3339 UTC
-timestamps. Personal data lives in ``chat_name`` / ``sender_nickname`` / ``text``,
-so they are never logged.
+평범한 dataclass이며, API 계층이 RFC3339 UTC 타임스탬프로 JSON으로 렌더링한다.
+개인정보는 ``chat_name`` / ``sender_nickname`` / ``text``에 있으므로 절대 로그에
+남기지 않는다.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 PLACEHOLDER_TEXT = "[지원하지 않는 메시지 타입입니다. 원본 메시지를 확인해주세요.]"
-"""Body stored for message types this backend does not support (ADR-003)."""
+"""이 백엔드가 지원하지 않는 메시지 타입에 대해 저장하는 본문 (ADR-003)."""
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ class Message:
     message_type: str
     reply_to_message_id: str | None = None
     is_feed: bool = False
-    # ADR-003: unsupported types are stored as text with the original type kept.
+    # ADR-003: 지원하지 않는 타입은 원래 타입을 유지한 채 text로 저장한다.
     original_message_type: str | None = None
     is_placeholder: bool = False
 
@@ -47,7 +47,7 @@ class Message:
         return asdict(self)
 
     def fingerprint(self) -> tuple[Any, ...]:
-        """Fields whose change must produce ``message.updated``."""
+        """변경되면 ``message.updated``를 만들어야 하는 필드."""
 
         return (
             self.chat_name,

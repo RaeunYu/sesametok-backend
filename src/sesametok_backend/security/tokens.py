@@ -1,7 +1,7 @@
-"""Interface API token: one bearer token, stored 0600, or supplied by env.
+"""인터페이스 API 토큰: 베어러 토큰 하나를 0600으로 저장하거나 환경변수로 받는다.
 
-The token authenticates the downstream interface projects. It is unrelated to the
-KakaoTalk database key, and it is never written to logs.
+이 토큰은 하위 인터페이스 프로젝트를 인증한다. 카카오톡 데이터베이스 키와는
+무관하며 로그에 절대 기록하지 않는다.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ TOKEN_BYTES = 32
 
 
 def load_or_create_token(settings: Settings) -> str:
-    """Return the API token, generating and persisting one on first use.
+    """API 토큰을 반환한다. 최초 사용 시 생성하여 저장한다.
 
-    Precedence: ``SESAMETOK_API_TOKEN`` → ``<data_dir>/api_token`` → freshly
-    generated (written 0600).
+    우선순위: ``SESAMETOK_API_TOKEN`` → ``<data_dir>/api_token`` → 새로 생성
+    (0600으로 기록).
     """
 
     if settings.api_token:
@@ -37,7 +37,7 @@ def load_or_create_token(settings: Settings) -> str:
 
 
 def rotate_token(settings: Settings) -> str:
-    """Replace the stored token with a fresh one and return it."""
+    """저장된 토큰을 새것으로 교체하고 반환한다."""
 
     token = secrets.token_urlsafe(TOKEN_BYTES)
     atomic_write_text(settings.api_token_path, token + "\n")
@@ -45,7 +45,7 @@ def rotate_token(settings: Settings) -> str:
 
 
 def token_source(settings: Settings) -> str:
-    """Where the token would come from, without revealing it."""
+    """토큰이 어디에서 오는지, 토큰 자체는 노출하지 않고 알려준다."""
 
     if settings.api_token:
         return "environment"

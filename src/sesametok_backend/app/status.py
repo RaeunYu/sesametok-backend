@@ -1,13 +1,13 @@
-"""Pure menu bar status model: states, symbols, summaries, and menu contents.
+"""메뉴바 상태 모델: 상태, 심볼, 요약, 메뉴 내용만 담은 순수 로직.
 
-This module is deliberately **AppKit-free** so it imports and unit-tests headlessly.
-It encodes the state model and the menu contents, as amended by ADR-007: the
-"미디어 폴링 여부" / "이모티콘 폴링 여부" toggles are **removed** and a read-only
-webhook status item is **added**.
+이 모듈은 의도적으로 **AppKit에 의존하지 않는다**. 그래서 헤드리스로 임포트하고
+단위 테스트할 수 있다. ADR-007에 따라 수정된 상태 모델과 메뉴 내용을 담고 있다:
+"미디어 폴링 여부" / "이모티콘 폴링 여부" 토글은 **제거**되었고, 읽기 전용
+webhook 상태 항목이 **추가**되었다.
 
-Privacy rule: every string produced here is built from state,
-counts, and timestamps only. Room names, nicknames, and message bodies never enter
-menu text, tooltips, or logs.
+프라이버시 규칙: 여기서 만들어지는 모든 문자열은 상태, 개수, 타임스탬프만으로
+구성된다. 방 이름, 닉네임, 메시지 본문은 메뉴 텍스트, 툴팁, 로그에 절대 들어가지
+않는다.
 """
 
 from __future__ import annotations
@@ -17,15 +17,15 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-#: Consecutive poll failures at or above this count raise ``Status.error``;
-#: anything between 1 and the threshold is ``Status.degraded``.
+#: 이 값 이상으로 연속 폴링 실패가 쌓이면 ``Status.error``가 된다.
+#: 1 이상 이 임계값 미만은 ``Status.degraded``다.
 FAILURE_THRESHOLD = 3
 
 
 class Status(enum.Enum):
-    """Menu bar states, declared from highest to lowest precedence.
+    """메뉴바 상태. 우선순위가 높은 것부터 낮은 것 순으로 선언한다.
 
-    Precedence: ``error`` > ``degraded`` > ``sending`` >
+    우선순위: ``error`` > ``degraded`` > ``sending`` >
     ``paused`` > ``starting`` > ``ok``.
     """
 
@@ -39,7 +39,7 @@ class Status(enum.Enum):
 
 _PRECEDENCE: dict[Status, int] = {state: rank for rank, state in enumerate(Status)}
 
-#: Human labels for the menu.
+#: 메뉴에 표시할 사람이 읽는 라벨.
 STATE_LABELS: dict[Status, str] = {
     Status.starting: "기동 중",
     Status.ok: "정상",
@@ -49,7 +49,7 @@ STATE_LABELS: dict[Status, str] = {
     Status.error: "오류",
 }
 
-#: SF Symbol names per state. macOS 11+.
+#: 상태별 SF Symbol 이름. macOS 11 이상.
 SF_SYMBOLS: dict[Status, str] = {
     Status.starting: "clock",
     Status.ok: "bubble.left.and.bubble.right",
@@ -61,24 +61,24 @@ SF_SYMBOLS: dict[Status, str] = {
 
 
 def select(candidates: Iterable[Status]) -> Status:
-    """Highest-precedence state among *candidates*, or :attr:`Status.ok` if empty."""
+    """*candidates* 중 우선순위가 가장 높은 상태. 비어 있으면 :attr:`Status.ok`."""
 
     return min(candidates, key=_PRECEDENCE.__getitem__, default=Status.ok)
 
 
 def symbol_name(state: Status) -> str:
-    """The SF Symbol for *state*."""
+    """*state*에 해당하는 SF Symbol."""
 
     return SF_SYMBOLS[state]
 
 
 def label(state: Status) -> str:
-    """The Korean menu label for *state*."""
+    """*state*에 해당하는 한국어 메뉴 라벨."""
 
     return STATE_LABELS[state]
 
 
-# ------------------------------------------------------------------ state input
+# ------------------------------------------------------------------ 상태 입력
 
 
 def compute_state(
@@ -93,12 +93,12 @@ def compute_state(
     starting: bool,
     failure_threshold: int = FAILURE_THRESHOLD,
 ) -> Status:
-    """Derive the menu bar state from plain, AppKit-free inputs.
+    """AppKit에 의존하지 않는 순수 입력으로부터 메뉴바 상태를 도출한다.
 
-    ``kakaotalk_running`` may be ``None`` when the probe did not answer; ``None``
-    is "unknown" and never degrades the state. A sync that has never completed
-    (``last_sync_at is None``) degrades, unless the backend is still ``starting``
-    or is intentionally ``paused``.
+    ``kakaotalk_running``은 프로브가 응답하지 않았을 때 ``None``일 수 있다.
+    ``None``은 "알 수 없음"이며 상태를 결코 나쁘게 만들지 않는다. 한 번도 완료되지
+    않은 동기화(``last_sync_at is None``)는 백엔드가 아직 ``starting``이거나
+    의도적으로 ``paused``인 경우가 아니면 성능저하로 본다.
     """
 
     candidates: set[Status] = set()
@@ -121,11 +121,11 @@ def compute_state(
     return select(candidates)
 
 
-# --------------------------------------------------------------------- summary
+# --------------------------------------------------------------------- 요약
 
 
 def _coerce_datetime(value: str | datetime | float | int | None) -> datetime | None:
-    """Parse an RFC3339 string, epoch seconds, or ``datetime`` into UTC-aware form."""
+    """RFC3339 문자열, epoch 초, 또는 ``datetime``을 UTC 기준 aware 형태로 파싱한다."""
 
     if value is None:
         return None
@@ -152,7 +152,7 @@ def _coerce_now(now: datetime | float | int | str | None) -> datetime:
 
 
 def relative_time(then: datetime, now: datetime) -> str:
-    """A coarse Korean relative-time phrase (never absolute personal data)."""
+    """대략적인 한국어 상대 시간 표현(절대적인 개인 정보는 결코 담지 않는다)."""
 
     seconds = int(max(0.0, (now - then).total_seconds()))
     if seconds < 60:
@@ -174,10 +174,10 @@ def summary_text(
     now: datetime | float | int | str | None = None,
     consecutive_failures: int = 0,
 ) -> str:
-    """One-line summary: state, counts, and relative timestamps only.
+    """한 줄 요약: 상태, 개수, 상대 시간만 담는다.
 
-    Example: ``정상 · 방 42 · 최근 동기화 3초 전``. Passing *now* makes the relative
-    phrase deterministic in tests.
+    예: ``정상 · 방 42 · 최근 동기화 3초 전``. *now*를 넘기면 테스트에서 상대
+    시간 표현이 결정적이 된다.
     """
 
     parts = [STATE_LABELS[state]]
@@ -191,12 +191,12 @@ def summary_text(
     return " · ".join(parts)
 
 
-# -------------------------------------------------------------------- snapshot
+# -------------------------------------------------------------------- 스냅샷
 
 
 @dataclass(frozen=True)
 class StatusSnapshot:
-    """Everything the menu bar needs for one render, with no personal data."""
+    """메뉴바가 한 번 그리는 데 필요한 모든 것. 개인 데이터는 없다."""
 
     status: Status
     summary: str
@@ -228,7 +228,7 @@ def build_snapshot(
     now: datetime | float | int | str | None = None,
     failure_threshold: int = FAILURE_THRESHOLD,
 ) -> StatusSnapshot:
-    """Compute a state plus its summary in one call."""
+    """상태와 그 요약을 한 번에 계산한다."""
 
     state = compute_state(
         kakaotalk_running=kakaotalk_running,
@@ -262,7 +262,7 @@ def build_snapshot(
     )
 
 
-# ------------------------------------------------------------------ menu model
+# ------------------------------------------------------------------ 메뉴 모델
 
 ACTION_OPEN_KAKAOTALK = "open_kakaotalk"
 ACTION_OPEN_FULL_DISK_ACCESS = "open_full_disk_access"
@@ -274,15 +274,14 @@ ACTION_OPEN_LOG = "open_log"
 ACTION_TOGGLE_AUTOSTART = "toggle_autostart"
 ACTION_QUIT = "quit"
 
-#: Item kinds: a disabled status line, a normal action, a checkbox, an
-#: explanatory disabled line, or a separator.
+#: 항목 종류: 비활성 상태 줄, 일반 동작, 체크박스, 설명용 비활성 줄, 구분선.
 KIND_STATUS = "status"
 KIND_ACTION = "action"
 KIND_CHECKBOX = "checkbox"
 KIND_INFO = "info"
 KIND_SEPARATOR = "separator"
 
-#: Stable item ids, so tests and the view agree without matching titles.
+#: 제목을 맞춰보지 않고도 테스트와 뷰가 합의할 수 있도록 안정적인 항목 id를 쓴다.
 ITEM_STATUS = "status_summary"
 ITEM_KAKAOTALK = "kakaotalk"
 ITEM_PERMISSIONS_FULL_DISK = "permissions_full_disk"
@@ -301,7 +300,7 @@ ITEM_QUIT = "quit"
 
 @dataclass(frozen=True)
 class MenuItem:
-    """One menu entry, as data, so the menu is testable without AppKit."""
+    """AppKit 없이도 테스트할 수 있도록 메뉴 항목 하나를 데이터로 표현한다."""
 
     item_id: str
     title: str
@@ -349,12 +348,11 @@ def menu_items(
     executable_path: str = "",
     now: datetime | float | int | str | None = None,
 ) -> list[MenuItem]:
-    """The full menu as data (ADR-007), with no media/emoticon polling toggles.
+    """전체 메뉴를 데이터로 표현한다(ADR-007). 미디어/이모티콘 폴링 토글은 없다.
 
-    The first item is the disabled status summary; the login-autostart item is a
-    checkbox whose state comes from ``snapshot.autostart``; the webhook item is
-    disabled and read-only (active subscription count + last success, never a URL
-    or a secret).
+    첫 항목은 비활성 상태 요약이다. 로그인 자동시작 항목은 체크박스이며 상태는
+    ``snapshot.autostart``에서 온다. webhook 항목은 비활성 읽기 전용이다(활성 구독
+    개수 + 최근 성공 시각이며, URL이나 비밀 값은 결코 넣지 않는다).
     """
 
     items: list[MenuItem] = [

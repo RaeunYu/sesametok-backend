@@ -1,10 +1,9 @@
-"""Webhook delivery worker.
+"""웹훅 전달 워커.
 
-Reads each subscription's pending events from the archive and POSTs them to the
-local target, signing the body with HMAC-SHA256. Delivery is at-least-once: the
-cursor only advances after a 2xx, and failures back off exponentially up to
-``SESAMETOK_WEBHOOK_MAX_ATTEMPTS`` before that event is skipped and recorded in
-``last_error`` so one broken endpoint cannot block a subscription forever.
+각 구독의 대기 중인 이벤트를 아카이브에서 읽어 로컬 대상에 POST하고, 본문에 HMAC-SHA256
+서명을 붙인다. 전달은 최소 1회 보장이다: 커서는 2xx를 받은 뒤에만 나아가고, 실패하면
+``SESAMETOK_WEBHOOK_MAX_ATTEMPTS``까지 지수 백오프한 뒤 그 이벤트를 건너뛰고 ``last_error``에
+기록한다. 그래야 망가진 엔드포인트 하나가 구독을 영원히 막지 못한다.
 """
 
 from __future__ import annotations
@@ -38,21 +37,21 @@ IDLE_TIMEOUT = 1.0
 
 
 def validate_webhook_url(url: object) -> str:
-    """Loopback ``http`` only — the backend never reaches the network."""
+    """루프백 ``http`` 전용 — 이 백엔드는 네트워크로 나가지 않는다."""
 
     if not isinstance(url, str) or not url.strip():
-        raise bad_request("webhook url is required")
+        raise bad_request("webhook URL이 필요합니다")
     parts = urlsplit(url.strip())
     if parts.scheme != "http":
-        raise bad_request("webhook url must use http:// (loopback targets only)")
+        raise bad_request("webhook URL은 http://를 써야 합니다(루프백 대상만 허용)")
     host = (parts.hostname or "").lower()
     if host not in LOOPBACK_HOSTS:
         raise bad_request(
-            "webhook url must point at loopback (127.0.0.1, ::1, or localhost); "
-            "forwarding to an external messenger is the interface project's job"
+            "webhook URL은 루프백(127.0.0.1, ::1, localhost)을 가리켜야 합니다; "
+            "외부 메신저로의 전달은 인터페이스 프로젝트의 책임입니다"
         )
     if parts.port is None:
-        raise bad_request("webhook url must include an explicit port")
+        raise bad_request("webhook URL에는 포트를 명시해야 합니다")
     return url.strip()
 
 
@@ -88,7 +87,7 @@ Sender = Callable[[str, bytes, dict[str, str], float], DeliveryResult]
 
 
 class WebhookDispatcher(threading.Thread):
-    """Delivers archived events to local subscribers, resuming from each cursor."""
+    """아카이브된 이벤트를 로컬 구독자에게 전달하며, 각자의 커서에서 이어받는다."""
 
     def __init__(
         self,
@@ -121,7 +120,7 @@ class WebhookDispatcher(threading.Thread):
         finally:
             self.bus.unsubscribe(subscription)
 
-    # ------------------------------------------------------------- delivery
+    # ------------------------------------------------------------- 전달
 
     def dispatch_once(self, *, now: float | None = None) -> int:
         moment = time.time() if now is None else now
@@ -171,16 +170,16 @@ class WebhookDispatcher(threading.Thread):
             attempts = self._attempts.get(hook["id"], 0) + 1
             self._attempts[hook["id"]] = attempts
             archive.record_webhook_result(
-                hook["id"], success=False, error=result.error or "delivery failed"
+                hook["id"], success=False, error=result.error or "전달 실패"
             )
             logger.warning(
-                "webhook %s delivery failed (attempt %d): %s",
+                "웹훅 %s 전달 실패(%d번째 시도): %s",
                 hook["id"],
                 attempts,
                 result.error,
             )
             if attempts >= max(1, self.settings.webhook_max_attempts):
-                # Skip the poisoned event so the subscription keeps moving.
+                # 구독이 계속 나아가도록 오염된 이벤트를 건너뛴다.
                 archive.set_webhook_cursor(hook["id"], event.seq)
                 self._attempts[hook["id"]] = 0
                 self._next_attempt[hook["id"]] = moment + 60.0

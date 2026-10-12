@@ -1,8 +1,7 @@
-"""Loopback HTTP and Unix-domain-socket servers.
+"""루프백 HTTP 및 Unix 도메인 소켓 서버.
 
-Both front-ends share one request handler and route table. HTTP binds to
-``127.0.0.1`` only; the socket is ``0600`` and relies on filesystem permissions
-in addition to the bearer token.
+두 프런트엔드는 요청 핸들러와 라우트 테이블을 하나씩 공유한다. HTTP는 ``127.0.0.1``에만
+바인딩한다. 소켓은 ``0600``이며, Bearer 토큰에 더해 파일시스템 권한에도 의존한다.
 """
 
 from __future__ import annotations
@@ -31,34 +30,34 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
     server_version = "sesametok-backend"
     sys_version = ""
 
-    # ------------------------------------------------------------ plumbing
+    # ------------------------------------------------------------ 공통 처리
 
     def address_string(self) -> str:
         client = self.client_address
         return client if isinstance(client, str) else str(client[0])
 
     def log_message(self, fmt: str, *args) -> None:
-        # Request lines can contain chat ids; keep them at debug level.
+        # 요청 라인에 chat id가 들어갈 수 있으니 debug 레벨로 유지한다.
         logger.debug("api %s", fmt % args)
 
-    def do_GET(self) -> None:  # noqa: N802 - stdlib naming
+    def do_GET(self) -> None:  # noqa: N802 - 표준 라이브러리 명명
         self._dispatch("GET")
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:  # noqa: N802 - 표준 라이브러리 명명
         self._dispatch("POST")
 
-    def do_PATCH(self) -> None:  # noqa: N802
+    def do_PATCH(self) -> None:  # noqa: N802 - 표준 라이브러리 명명
         self._dispatch("PATCH")
 
-    def do_DELETE(self) -> None:  # noqa: N802
+    def do_DELETE(self) -> None:  # noqa: N802 - 표준 라이브러리 명명
         self._dispatch("DELETE")
 
     def __getattr__(self, name: str):
-        """Route any other HTTP method through the router (so it can answer 405).
+        """다른 모든 HTTP 메서드를 라우터를 거쳐 보낸다(그래서 405를 응답할 수 있다).
 
-        ``BaseHTTPRequestHandler`` looks up ``do_<METHOD>`` dynamically; without
-        this, an unsupported verb would get the stdlib's HTML 501 instead of our
-        JSON error contract.
+        ``BaseHTTPRequestHandler``는 ``do_<METHOD>``를 동적으로 찾는다. 이게 없으면
+        지원하지 않는 메서드가 우리 JSON 오류 계약 대신 표준 라이브러리의 HTML 501을
+        받게 된다.
         """
 
         if name.startswith("do_"):
@@ -66,7 +65,7 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
             return lambda: self._dispatch(method)
         raise AttributeError(name)
 
-    # ------------------------------------------------------------ dispatch
+    # ------------------------------------------------------------ 디스패치
 
     def _dispatch(self, method: str) -> None:
         context: ApiContext = self.server.context  # type: ignore[attr-defined]
@@ -91,8 +90,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
             response = handler(context, request)
         except ApiError as exc:
             response = Response.json(exc.to_payload(), exc.status)
-        except Exception as exc:  # never leak a traceback to the client
-            logger.error("unhandled API error: %s", type(exc).__name__)
+        except Exception as exc:  # 클라이언트에 트레이스백을 절대 흘리지 않는다
+            logger.error("처리되지 않은 API 오류: %s", type(exc).__name__)
             response = Response.json(internal().to_payload(), 500)
 
         self._respond(response)
@@ -151,7 +150,7 @@ class ApiUnixServer(socketserver.ThreadingUnixStreamServer):
     def __init__(self, path: Path, context: ApiContext, router: Router) -> None:
         self.context = context
         self.router = router
-        # BaseHTTPRequestHandler expects these on the server object.
+        # BaseHTTPRequestHandler는 서버 객체에 이 속성들이 있기를 기대한다.
         self.server_name = "localhost"
         self.server_port = 0
         if path.exists():
@@ -167,7 +166,7 @@ MAX_SOCKET_PATH_BYTES = 100
 
 
 class ApiService:
-    """Runs the HTTP and (optionally) UDS front-ends in daemon threads."""
+    """HTTP와 (선택적) UDS 프런트엔드를 데몬 스레드로 실행한다."""
 
     def __init__(
         self,
@@ -187,21 +186,21 @@ class ApiService:
         self._unix: ApiUnixServer | None = None
         self._threads: list[threading.Thread] = []
 
-    # -------------------------------------------------------------- start
+    # -------------------------------------------------------------- 시작
 
     def start(self) -> None:
         self._http = ApiHttpServer((self.host, self.port), self.context, self.router)
         self.port = self._http.server_address[1]
         self._spawn(self._http, f"api-http:{self.host}:{self.port}")
-        logger.info("API listening on http://%s:%s", self.host, self.port)
+        logger.info("API가 http://%s:%s에서 수신 대기 중", self.host, self.port)
 
         if self.uds_path is not None:
             encoded = str(self.uds_path).encode("utf-8")
             if len(encoded) > MAX_SOCKET_PATH_BYTES:
-                # sun_path is short on macOS; a deep data dir cannot hold a socket.
+                # macOS에서 sun_path는 짧다. 데이터 디렉터리가 깊으면 소켓을 담을 수 없다.
                 logger.warning(
-                    "skipping the unix socket: path is %d bytes (limit ~%d); "
-                    "set SESAMETOK_UDS_PATH to a shorter path",
+                    "unix 소켓을 건너뜁니다: 경로가 %d바이트입니다(한도 ~%d); "
+                    "SESAMETOK_UDS_PATH를 더 짧은 경로로 설정하세요",
                     len(encoded),
                     MAX_SOCKET_PATH_BYTES,
                 )
@@ -210,14 +209,14 @@ class ApiService:
                 self.uds_path.parent.mkdir(parents=True, exist_ok=True)
                 self._unix = ApiUnixServer(self.uds_path, self.context, self.router)
                 self._spawn(self._unix, f"api-uds:{self.uds_path}")
-                logger.info("API listening on unix socket %s", self.uds_path)
+                logger.info("API가 unix 소켓 %s에서 수신 대기 중", self.uds_path)
 
     def _spawn(self, server: socketserver.BaseServer, name: str) -> None:
         thread = threading.Thread(target=server.serve_forever, name=name, daemon=True)
         thread.start()
         self._threads.append(thread)
 
-    # --------------------------------------------------------------- stop
+    # --------------------------------------------------------------- 종료
 
     def stop(self) -> None:
         for server in (self._http, self._unix):
@@ -238,7 +237,7 @@ class ApiService:
     @property
     def base_url(self) -> str:
         host = self.host
-        if ":" in host:  # IPv6 literal
+        if ":" in host:  # IPv6 리터럴
             return f"http://[{host}]:{self.port}"
         return f"http://{host}:{self.port}"
 

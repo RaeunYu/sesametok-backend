@@ -49,8 +49,8 @@ def test_guidance_names_the_executable_to_grant(tmp_path: Path) -> None:
     joined = "\n".join(lines)
 
     assert report["python_executable"] in joined
-    assert "Full Disk Access" in joined
-    assert "Accessibility" in joined
+    assert "전체 디스크 접근" in joined
+    assert "손쉬운 사용" in joined
 
 
 def test_no_guidance_when_everything_is_fine(tmp_path: Path) -> None:
@@ -87,8 +87,8 @@ def test_symlinked_interpreter_is_called_out(tmp_path: Path) -> None:
         }
     )
     joined = "\n".join(diagnostics.permission_guidance(report))
-    assert "symlink" in joined
-    assert "invalidates the grant" in joined
+    assert "심볼릭 링크" in joined
+    assert "권한이 무효" in joined
 
 
 def test_guidance_mentions_kakaotalk_not_running(tmp_path: Path) -> None:
@@ -99,4 +99,4 @@ def test_guidance_mentions_kakaotalk_not_running(tmp_path: Path) -> None:
     )
     report.update({"accessibility_trusted": True, "kakaotalk_installed": True,
                    "kakaotalk_running": False, "full_disk_access_ok": True})
-    assert any("not running" in line for line in diagnostics.permission_guidance(report))
+    assert any("실행 중이 아닙니다" in line for line in diagnostics.permission_guidance(report))

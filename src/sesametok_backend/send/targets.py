@@ -1,9 +1,9 @@
-"""Turning an archive room into something the KakaoTalk UI can be driven to.
+"""아카이브의 방을 카카오톡 UI로 구동할 수 있는 대상으로 바꾼다.
 
-The AX layer only knows window titles and chat-list rows, never chat ids
-A chat id therefore has to be reduced to a
-*name plus rank*: the 0-based position among chats that share that name, ordered
-newest-first. When that is ambiguous the send is refused rather than guessed.
+AX 계층은 창 제목과 채팅 목록 행만 알 뿐, chat id는 모른다. 따라서 chat id를
+*이름 + 순위*로 환원해야 한다. 순위는 같은 이름을 가진 채팅들 사이에서의
+0부터 시작하는 위치이며, 최신순으로 정렬한다. 이것이 모호하면 추측하지 않고
+전송을 거부한다.
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ from dataclasses import dataclass
 
 from ..models import Room
 
-# Characters that can never appear in a chat name we are willing to type.
-# Control characters plus the invisible/format ranges.
+# 우리가 입력하려는 채팅 이름에는 절대 나타날 수 없는 문자들.
+# 제어 문자와 보이지 않는/서식 문자 범위.
 UNSAFE_RANGES: tuple[tuple[int, int], ...] = (
     (0x0000, 0x001F),
     (0x007F, 0x009F),
@@ -27,7 +27,7 @@ UNSAFE_RANGES: tuple[tuple[int, int], ...] = (
 
 
 class TargetError(ValueError):
-    """The archived room cannot be reduced to a unique on-screen target."""
+    """아카이브의 방을 화면 위의 유일한 대상으로 환원할 수 없다."""
 
     def __init__(self, code: str, **details: object) -> None:
         self.code = code
@@ -36,13 +36,13 @@ class TargetError(ValueError):
 
 
 def room_member_key(title: str) -> list[str]:
-    """Split a group-room title into its member names, order-insensitively."""
+    """단체방 제목을 구성원 이름들로 나눈다. 순서는 무시한다."""
 
     return sorted(part.strip() for part in title.split(",") if part.strip())
 
 
 def room_matches(candidate: str, wanted: str) -> bool:
-    """Exact match, or the same member set in a different order."""
+    """정확히 일치하거나, 같은 구성원 집합이 다른 순서로 있어도 일치한다."""
 
     if candidate == wanted:
         return True
@@ -51,7 +51,7 @@ def room_matches(candidate: str, wanted: str) -> bool:
 
 
 def search_query(title: str) -> str:
-    """The string to type into chat search: the longest member, else the title."""
+    """채팅 검색에 입력할 문자열: 가장 긴 구성원 이름, 없으면 제목 전체."""
 
     members = room_member_key(title)
     if not members:
@@ -61,7 +61,7 @@ def search_query(title: str) -> str:
 
 
 def untypable_characters(name: str) -> list[str]:
-    """Codepoints in *name* that a chat name cannot contain (as ``U+XXXX``)."""
+    """*name* 안에서 채팅 이름이 담을 수 없는 코드포인트들(``U+XXXX`` 형식)."""
 
     offenders: list[str] = []
     for character in name:
@@ -88,7 +88,7 @@ class SendTarget:
 
 
 def _newest_first(rooms: list[Room]) -> list[Room]:
-    """Order same-named rooms newest-first, ``None`` last, chat_id ties ascending."""
+    """같은 이름의 방들을 최신순으로 정렬한다. ``None``은 마지막, chat_id 동률은 오름차순."""
 
     ordered = sorted(rooms, key=lambda room: room.chat_id)
     ordered.sort(key=lambda room: room.last_message_at or "", reverse=True)
@@ -97,10 +97,10 @@ def _newest_first(rooms: list[Room]) -> list[Room]:
 
 
 def resolve_target(rooms: list[Room], chat_id: str) -> SendTarget:
-    """Reduce *chat_id* to ``(name, rank)`` or raise ``TargetError``.
+    """*chat_id*를 ``(이름, 순위)``로 환원하거나 ``TargetError``를 발생시킨다.
 
-    Raises ``target_ambiguous`` when same-named rooms cannot be ordered, because
-    clicking the wrong row cannot be undone.
+    같은 이름의 방들 순서를 정할 수 없으면 ``target_ambiguous``를 발생시킨다.
+    잘못된 행을 클릭하면 되돌릴 수 없기 때문이다.
     """
 
     room = next((candidate for candidate in rooms if candidate.chat_id == chat_id), None)
@@ -113,7 +113,7 @@ def resolve_target(rooms: list[Room], chat_id: str) -> SendTarget:
     if len(same) <= 1:
         return SendTarget(chat_id, room.chat_name, 0, room.chat_type)
 
-    # Two rooms with the same recency cannot be told apart on screen.
+    # 최근성이 같은 두 방은 화면에서 구분할 수 없다.
     stamp = room.last_message_at
     if any(
         candidate.chat_id != chat_id and candidate.last_message_at == stamp

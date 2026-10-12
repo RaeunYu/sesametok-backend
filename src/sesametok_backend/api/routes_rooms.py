@@ -1,4 +1,4 @@
-"""Room and conversation read endpoints."""
+"""방과 대화 조회 엔드포인트."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def get_room(context: ApiContext, request: Request) -> Response:
     finally:
         archive.close()
     if room is None:
-        raise not_found(f"no archived room with chat_id={chat_id}", "room_not_found")
+        raise not_found(f"chat_id={chat_id}인 아카이브 방이 없습니다", "room_not_found")
     return Response.json(room.to_dict())
 
 
@@ -37,9 +37,9 @@ def _parse_limit(raw: str | None) -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise bad_request("limit must be an integer") from exc
+        raise bad_request("limit은 정수여야 합니다") from exc
     if value < 1:
-        raise bad_request("limit must be at least 1")
+        raise bad_request("limit은 1 이상이어야 합니다")
     return min(value, MAX_PAGE_LIMIT)
 
 
