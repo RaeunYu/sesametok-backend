@@ -73,7 +73,12 @@ class FakeLaunchctl:
 
 
 def _settings(tmp_path: Path) -> Settings:
-    return Settings(data_dir=tmp_path / "data", log_dir=tmp_path / "logs")
+    # 앱 번들이 없는 상태를 기본으로 한다(실제 /Applications를 보지 않도록).
+    return Settings(
+        data_dir=tmp_path / "data",
+        log_dir=tmp_path / "logs",
+        app_bundle_override=tmp_path / "Missing.app",
+    )
 
 
 # ----------------------------------------------------------------------- plist 내용
@@ -200,27 +205,28 @@ def test_parse_launchctl_print_handles_samples() -> None:
 # ----------------------------------------------------------------------- CLI 수명주기
 
 
-def test_cli_install_writes_plist_and_bootstraps(env, monkeypatch, capsys) -> None:
+def test_cli_register_writes_plist_and_bootstraps(env, monkeypatch, capsys) -> None:
     fake = FakeLaunchctl(loaded=False, running=False)
     monkeypatch.setattr(launcher, "run_launchctl", fake)
 
-    assert cli.main(["install"]) == 0
+    assert cli.main(["register"]) == 0
 
     plist = env / "agent.plist"
     assert plist.is_file()
     assert plistlib.loads(plist.read_bytes())["Label"] == LAUNCHD_LABEL
     assert "bootstrap" in fake.verbs()
     out = capsys.readouterr().out
-    assert "권한 부여 대상: " + diagnostics.python_executable() in out
+    assert "권한 부여 대상" in out
+    assert diagnostics.python_executable() in out
     assert "전체 디스크 접근 권한" in out
 
 
-def test_cli_uninstall_bootouts_and_removes_plist(env, monkeypatch, capsys) -> None:
+def test_cli_unregister_bootouts_and_removes_plist(env, monkeypatch, capsys) -> None:
     launcher.install_plist(Settings.from_env())
     fake = FakeLaunchctl(loaded=True, running=True)
     monkeypatch.setattr(launcher, "run_launchctl", fake)
 
-    assert cli.main(["uninstall"]) == 0
+    assert cli.main(["unregister"]) == 0
 
     assert not (env / "agent.plist").exists()
     assert "bootout" in fake.verbs()
@@ -306,7 +312,25 @@ def test_cli_refuses_to_touch_a_plist_outside_the_allowed_locations(
     fake = FakeLaunchctl()
     monkeypatch.setattr(launcher, "run_launchctl", fake)
 
-    assert cli.main(["install"]) == 1
+    assert cli.main(["register"]) == 1
 
     assert fake.calls == []
     assert "관리를 거부합니다" in capsys.readouterr().err
+
+
+def test_program_arguments_use_the_app_when_installed(env) -> None:
+    settings = Settings.from_env()
+    executable = settings.app_executable
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_text("x", encoding="utf-8")
+
+    assert launcher.program_arguments(settings) == [str(executable), "--managed"]
+    assert str(executable) in launcher.render_plist(settings)
+
+
+def test_program_arguments_fall_back_to_the_interpreter(env) -> None:
+    settings = Settings.from_env()
+    arguments = launcher.program_arguments(settings)
+
+    assert arguments[:3] == [str(settings.python_executable), "-m", "sesametok_backend"]
+    assert arguments[-2:] == ["foreground", "--managed"]

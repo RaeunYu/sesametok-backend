@@ -116,3 +116,26 @@ def test_ensure_directories_creates_private_dirs(tmp_path: Path) -> None:
     assert settings.kakaotalk_auth_cache_path.parent.is_dir()
     assert settings.log_dir.is_dir()
     assert os.stat(settings.data_dir).st_mode & 0o777 == 0o700
+
+
+def test_grant_target_falls_back_to_the_interpreter(tmp_path: Path) -> None:
+    settings = Settings.from_env(
+        {
+            "SESAMETOK_DATA_DIR": str(tmp_path),
+            "SESAMETOK_APP_BUNDLE": str(tmp_path / "Missing.app"),
+        }
+    )
+    assert settings.app_installed() is False
+    assert settings.tcc_grant_target == settings.python_executable
+
+
+def test_grant_target_uses_the_app_bundle_when_present(tmp_path: Path) -> None:
+    app = tmp_path / "SesametokBackend.app"
+    macos = app / "Contents" / "MacOS"
+    macos.mkdir(parents=True)
+    (macos / "SesametokBackend").write_text("#!/bin/sh\n", encoding="utf-8")
+    settings = Settings.from_env(
+        {"SESAMETOK_DATA_DIR": str(tmp_path), "SESAMETOK_APP_BUNDLE": str(app)}
+    )
+    assert settings.app_installed() is True
+    assert settings.tcc_grant_target == app

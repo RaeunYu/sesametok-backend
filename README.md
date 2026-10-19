@@ -34,7 +34,8 @@ macOS에 설치·로그인된 **카카오톡 데스크톱 앱**을 데이터 소
 
 - macOS (Apple Silicon), 카카오톡 macOS 앱 설치·로그인·실행
 - Python 3.13 (개발·검증 환경: 3.13.3). `sqlcipher3==0.6.3`이 cp313 arm64 wheel을 제공합니다.
-- 전체 디스크 접근 권한(읽기), 손쉬운 사용 권한(발신)
+- 손쉬운 사용 권한(발신). ~~전체 디스크 접근 권한(읽기)~~ 은 이 macOS/KakaoTalk 조합에서
+  **필요하지 않습니다**(아래 "권한" 항목 참고).
 
 ---
 
@@ -94,18 +95,47 @@ sesametok-backend status       # 실행/권한 상태 + 권한이 없으면 부�
 
 ### 4) 첫 실행 전 준비
 
-1. **권한 부여** — 전체 디스크 접근(읽기)과 손쉬운 사용(발신)이 필요합니다.
-   `sesametok-backend permissions` / `sesametok-backend permissions --accessibility`로 설정 창을 열고,
-   `status`가 알려주는 **실행 파일 경로**에 부여하세요(아래 "권한" 항목).
+1. **권한 부여** — 발신에 필요한 **손쉬운 사용**만 부여하면 됩니다.
+   ~~전체 디스크 접근(읽기)~~ 은 이 macOS/KakaoTalk 조합에서 **필요하지 않습니다**: 카카오톡 컨테이너가
+   TCC 보호 대상이 아니라 같은 사용자 프로세스가 그 권한 없이 읽습니다. 읽기가 실제로 실패하는
+   환경에서만 요구됩니다. `sesametok-backend permissions --accessibility`로 설정 창을 열고,
+   `status`가 알려주는 **권한 부여 대상**(앱을 빌드했다면 앱)에 부여하세요.
 2. **아카이브 키 백업** — 최초 기동 시 키가 생성되어 로그인 키체인에 저장되고 화면에 1회 표시됩니다.
    반드시 별도로 보관하세요(아래 "첫 실행에서 반드시 할 일: 아카이브 키 백업").
 3. **첫 기동은 느릴 수 있습니다** — 계정 식별이 SHA-512 역추적으로 넘어가면 수십 초가 걸립니다.
    성공하면 캐시되어 다음 기동부터는 즉시 끝납니다.
 4. **개발 실행과 launchd 실행은 권한 대상이 다릅니다** — `foreground`는 터미널(또는 venv python)에,
-   `start`/`install`은 plist의 `ProgramArguments`에 적힌 절대 경로 python에 권한이 귀속됩니다.
+   `start`/`register`는 plist의 `ProgramArguments`에 적힌 절대 경로 python에 권한이 귀속됩니다.
    실행 방법을 바꾸면 권한을 다시 부여해야 할 수 있습니다.
 5. **저장소를 옮기면** venv를 다시 만들어야 합니다(`./.venv` 경로가 바뀌면 콘솔 스크립트와 TCC
    권한이 모두 무효가 됩니다).
+
+---
+
+## 앱 패키징 (권장)
+
+권한을 **앱 하나에만** 주려면 앱 번들로 감싸세요. 이 앱은 얇은 스텁이라 **파이썬을 번들하지 않고**
+venv의 인터프리터를 자식으로 실행합니다. 의존성은 venv에 그대로 있고, TCC 권한만 앱에 귀속됩니다
+(실측 확인).
+
+```bash
+./.venv/bin/python packaging/build_app.py      # /Applications/SesametokBackend.app
+sesametok-backend register                     # 로그인 시 자동시작 (plist가 이 앱을 가리킨다)
+```
+
+- 빌드 후 **시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용**에서 이 앱을 켜세요(발신에 필요).
+  ~~전체 디스크 접근~~ 은 보통 필요하지 않습니다. 목록에 앱으로 나타나므로 `+`로 `/Applications`에서
+  바로 추가할 수 있습니다(숨김 폴더나 단축키가 필요 없습니다). 목록에 보이는 것과 **토글이 켜진
+  것은 다릅니다.**
+- **앱을 더블클릭하면 `sesametok-backend start`와 같습니다.** 인자 없이 실행하면 plist가 없을 때
+  등록하고 launchd로 기동하며, 이미 실행 중이면 아무것도 하지 않습니다.
+- `SesametokBackend.app/Contents/MacOS/SesametokBackend <인자>`로 CLI를 그대로 쓸 수도 있습니다.
+- **앱을 다시 빌드하면 서명 해시가 바뀌어 기존 권한이 무효**가 됩니다. 재빌드 후 다시 부여하세요.
+  (재빌드하면 `packaging/stub.c`의 시그널 전달 수정도 반영됩니다.)
+- 앱을 없애려면 `sesametok-backend unregister` 후 `/Applications/SesametokBackend.app`을 삭제합니다.
+
+앱을 빌드하지 않으면 권한 대상이 인터프리터로 떨어지고, pyenv 경로가 공유되므로 **같은 Python을
+쓰는 다른 프로젝트도 권한을 얻게 됩니다.** 가능하면 앱을 빌드하세요.
 
 ---
 
@@ -121,9 +151,14 @@ sesametok-backend logs -n 100
 sesametok-backend token [--copy]         # 인터페이스용 API 토큰
 sesametok-backend archive-key [--force]  # 아카이브 키 백업용 출력
 sesametok-backend permissions [--accessibility]
-sesametok-backend install        # 로그인 시 자동 시작 등록
-sesametok-backend uninstall
+sesametok-backend register       # 로그인 시 자동시작 등록 (launchd LaunchAgent)
+sesametok-backend unregister     # 로그인 시 자동시작 등록 해제 + 백엔드 중지
 ```
+
+`status`의 권한 줄에는 **어느 프로세스가 잰 값인지**가 표시됩니다:
+`(권한 측정: 백엔드)`는 실행 중인 백엔드가 스스로 잰 값이고, `(권한 측정: 터미널)`은 이 명령을
+실행한 터미널의 값입니다. 권한은 프로세스마다 다르므로, 앱으로 띄운 백엔드는 `정상`인데 터미널은
+`없음`일 수 있습니다.
 
 ### 첫 실행에서 반드시 할 일: 아카이브 키 백업
 
@@ -145,18 +180,32 @@ sesametok-backend archive-key --force   # 64자 hex 키를 출력
 
 ### 권한 (가장 흔한 함정)
 
-권한은 "책임 프로세스"에 귀속되고, **실행 방법과 실행 파일 경로에 따라 대상이 달라집니다.**
+권한은 "책임 프로세스"에 귀속되고, **어떻게 실행했는지에 따라 대상이 달라집니다.** 실측 결과:
 
-| 실행 방법 | 권한을 부여할 대상 |
+| 실행 경로 | 권한을 부여할 대상 |
 |---|---|
-| 터미널에서 `foreground` | `sesametok-backend status`가 알려주는 경로(보통 터미널 또는 venv python이 resolve된 실제 바이너리) |
-| launchd | `ProgramArguments`의 절대 경로 python |
+| **앱 더블클릭 / launchd / `open`** | **`SesametokBackend.app` 하나** |
+| 터미널에서 `foreground` | 터미널(또는 venv python이 resolve된 바이너리) |
 
-- `./.venv/bin/python`은 pyenv 바이너리의 심볼릭 링크일 수 있습니다. 이때 macOS는 **resolve된 실제
-  바이너리 경로**로 권한을 기록하므로, Python 버전을 올리면 권한이 무효가 됩니다. `status`가
-  `launched as`와 `grant target`을 함께 보여줍니다.
-- **전체 디스크 접근**: 카카오톡 DB 읽기에 필요. `sesametok-backend permissions`
-- **손쉬운 사용**: 발신에 필요. `sesametok-backend permissions --accessibility`
+앱으로 실행하면 앱이 띄운 python 자식이 **앱의 권한을 그대로 물려받습니다.** 같은 인터프리터를
+셸에서 쓰거나 다른 프로젝트에서 쓰면 **권한이 0**입니다(실측). 그래서 권한을 앱 하나에만 주면 됩니다.
+
+- **카카오톡 읽기**: 이 머신에서는 카카오톡 컨테이너가 **전체 디스크 접근 권한 없이도 읽혔습니다.**
+  `status`의 `카카오톡 읽기: 가능`이 그것입니다. 읽기가 실제로 실패할 때만 전체 디스크 접근을 요구합니다.
+- ~~**전체 디스크 접근**~~: **이 프로젝트에는 필요하지 않습니다.** 카카오톡 컨테이너
+  (`~/Library/Containers/com.kakao.KakaoTalkMac/…`)는 TCC 보호 대상이 아니라 같은 사용자 프로세스가
+  이 권한 없이 나열·읽기 합니다(실측: 284.8MB DB 읽기 성공). 대조로 `~/Library/Safari`·`Mail`·
+  `Messages`, `~/Library/Containers/com.apple.Safari`는 같은 조건에서 `Operation not permitted`였습니다.
+  `status`는 그래도 **실제 부여 여부**를 TCC 보호 경로로 판정해 표시합니다(카카오톡 저장소로 판정하면
+  권한이 없어도 "부여됨"으로 오판합니다).
+- **손쉬운 사용**: 발신에 **반드시** 필요합니다. 읽기·조회만 쓴다면 권한이 하나도 필요 없습니다.
+
+```bash
+sesametok-backend permissions                  # 전체 디스크 접근 설정 창
+sesametok-backend permissions --accessibility  # 손쉬운 사용 설정 창
+```
+
+`status`가 **권한 부여 대상 경로**를 그대로 알려 줍니다(`권한 부여 대상`).
 
 ---
 
@@ -237,6 +286,7 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 | `SESAMETOK_WEBHOOK_TIMEOUT_SECONDS` / `..._MAX_ATTEMPTS` | webhook 전달 | `5` / `5` |
 | `SESAMETOK_UDS` / `SESAMETOK_UDS_PATH` | UDS 사용 / 경로 | `1` / `<data_dir>/backend.sock` |
 | `SESAMETOK_LAUNCHD_PLIST` | plist 경로 override | `~/Library/LaunchAgents/com.sesametok.sesametok-backend.plist` |
+| `SESAMETOK_APP_BUNDLE` | 앱 번들 경로 override | `/Applications/SesametokBackend.app` |
 | `SESAMETOK_API` | API·webhook·발신 워커 기동 | `1` |
 | `SESAMETOK_NO_MENUBAR` | 메뉴바 없이 서버만 실행 | `0` |
 | `SESAMETOK_LOG_LEVEL` | 로그 레벨 | `info` |

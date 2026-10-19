@@ -20,6 +20,9 @@ ENV_PREFIX = "SESAMETOK_"
 LAUNCHD_LABEL = "com.sesametok.sesametok-backend"
 BUNDLE_ID = LAUNCHD_LABEL
 
+APP_NAME = "SesametokBackend"
+DEFAULT_APP_BUNDLE = Path("/Applications") / f"{APP_NAME}.app"
+
 DEFAULT_DATA_DIR = Path.home() / "Library" / "Application Support" / "sesametok-backend"
 DEFAULT_LOG_DIR = Path.home() / "Library" / "Logs" / "sesametok-backend"
 DEFAULT_HOST = "127.0.0.1"
@@ -126,6 +129,7 @@ class Settings:
     uds_enabled: bool = True
     uds_path_override: Path | None = None
     launchd_plist_override: Path | None = None
+    app_bundle_override: Path | None = None
     event_retention_days: int = 30
     event_retention_max: int = 100_000
     backfill_days: int = 30
@@ -156,6 +160,7 @@ class Settings:
             uds_enabled=env.boolean("UDS", True),
             uds_path_override=env.optional_path("UDS_PATH"),
             launchd_plist_override=env.optional_path("LAUNCHD_PLIST"),
+            app_bundle_override=env.optional_path("APP_BUNDLE"),
             event_retention_days=env.int("EVENT_RETENTION_DAYS", 30),
             event_retention_max=env.int("EVENT_RETENTION_MAX", 100_000),
             backfill_days=env.int("BACKFILL_DAYS", 30),
@@ -211,6 +216,35 @@ class Settings:
         """TCC가 유효하게 유지되려면 LaunchAgent가 가리켜야 하는 인터프리터."""
 
         return Path(sys.executable).resolve()
+
+    @property
+    def app_bundle_path(self) -> Path:
+        """TCC 권한을 부여할 앱 번들 경로(``packaging/build_app.py``가 만든다)."""
+
+        if self.app_bundle_override is not None:
+            return self.app_bundle_override
+        return DEFAULT_APP_BUNDLE
+
+    @property
+    def app_executable(self) -> Path:
+        """앱 번들 안의 실행 파일."""
+
+        return self.app_bundle_path / "Contents" / "MacOS" / APP_NAME
+
+    def app_installed(self) -> bool:
+        """앱 번들이 빌드되어 있는가."""
+
+        return self.app_executable.is_file()
+
+    @property
+    def tcc_grant_target(self) -> Path:
+        """사용자가 권한을 부여할 대상.
+
+        앱이 있으면 **앱 번들**이다(권한이 앱에만 귀속되고 공용 인터프리터는 영향을
+        받지 않는다). 앱이 없을 때만 인터프리터로 떨어진다.
+        """
+
+        return self.app_bundle_path if self.app_installed() else self.python_executable
 
     # ---------------------------------------------------------------------- 헬퍼
 

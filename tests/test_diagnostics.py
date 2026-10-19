@@ -29,15 +29,20 @@ def test_collect_shape(tmp_path: Path) -> None:
         "python_executable",
         "invoked_executable",
         "python_is_symlinked",
+        "grant_target",
+        "grant_target_is_app",
         "kakaotalk_installed",
         "kakaotalk_running",
         "accessibility_trusted",
-        "full_disk_access_ok",
+        "store_readable",
+        "full_disk_access",
         "store_roots",
         "menubar",
     }
     assert Path(report["python_executable"]).is_absolute()
-    assert report["full_disk_access_ok"] is False
+    # 저장소 루트가 없으므로 읽을 수 없고, FDA는 별도로 판정된다.
+    assert report["store_readable"] is False
+    assert report["full_disk_access"] in (True, False, None)
 
 
 def test_guidance_names_the_executable_to_grant(tmp_path: Path) -> None:
@@ -48,7 +53,7 @@ def test_guidance_names_the_executable_to_grant(tmp_path: Path) -> None:
     lines = diagnostics.permission_guidance(report)
     joined = "\n".join(lines)
 
-    assert report["python_executable"] in joined
+    assert report["grant_target"] in joined
     assert "전체 디스크 접근" in joined
     assert "손쉬운 사용" in joined
 
@@ -64,7 +69,7 @@ def test_no_guidance_when_everything_is_fine(tmp_path: Path) -> None:
             "accessibility_trusted": True,
             "kakaotalk_installed": True,
             "kakaotalk_running": True,
-            "full_disk_access_ok": True,
+            "store_readable": True,
             "python_is_symlinked": False,
         }
     )
@@ -72,15 +77,22 @@ def test_no_guidance_when_everything_is_fine(tmp_path: Path) -> None:
 
 
 def test_symlinked_interpreter_is_called_out(tmp_path: Path) -> None:
+    # 앱이 없을 때의 경로를 검증한다(앱이 있으면 권한 대상이 앱이라 경고가 사라진다).
     report = diagnostics.collect(
-        Settings.from_env({"SESAMETOK_DATA_DIR": str(tmp_path)}), (tmp_path / "missing",)
+        Settings.from_env(
+            {
+                "SESAMETOK_DATA_DIR": str(tmp_path),
+                "SESAMETOK_APP_BUNDLE": str(tmp_path / "Missing.app"),
+            }
+        ),
+        (tmp_path / "missing",),
     )
     report.update(
         {
             "accessibility_trusted": True,
             "kakaotalk_installed": True,
             "kakaotalk_running": True,
-            "full_disk_access_ok": True,
+            "store_readable": True,
             "python_is_symlinked": True,
             "invoked_executable": "/venv/bin/python",
             "python_executable": "/real/3.13/bin/python3.13",
@@ -98,5 +110,20 @@ def test_guidance_mentions_kakaotalk_not_running(tmp_path: Path) -> None:
         Settings.from_env({"SESAMETOK_DATA_DIR": str(tmp_path)}), (root,)
     )
     report.update({"accessibility_trusted": True, "kakaotalk_installed": True,
-                   "kakaotalk_running": False, "full_disk_access_ok": True})
+                   "kakaotalk_running": False, "store_readable": True})
     assert any("실행 중이 아닙니다" in line for line in diagnostics.permission_guidance(report))
+
+
+def test_fda_probe_is_independent_of_the_kakao_store(tmp_path: Path) -> None:
+    """저장소가 읽힌다고 해서 전체 디스크 접근 권한이 부여된 것은 아니다."""
+
+    root = tmp_path / "store"
+    root.mkdir()
+    report = diagnostics.collect(
+        Settings.from_env({"SESAMETOK_DATA_DIR": str(tmp_path)}), (root,)
+    )
+
+    assert report["store_readable"] is True
+    assert report["full_disk_access"] == diagnostics.full_disk_access_granted()
+    # 판정 대상은 TCC 보호 경로이며 카카오톡 컨테이너가 아니다.
+    assert all("KakaoTalk" not in str(path) for path in diagnostics.FDA_PROBE_PATHS)

@@ -187,3 +187,21 @@ def test_identity_summary_never_leaks_the_user_id() -> None:
 
     assert "1000000001" not in str(summary)
     assert summary["source"] == "plist"
+
+
+def test_reverse_lookup_parallel_returns_without_hanging() -> None:
+    """병렬 경로가 결과를 찾고 워커를 정리한 뒤 즉시 돌아와야 한다.
+
+    워커가 부모의 SIGTERM 핸들러를 상속하면 pool.terminate()가 먹히지 않아
+    join()이 영원히 멈춘다(실측으로 발견한 결함).
+    """
+
+    import time
+
+    target = hashlib.sha512(b"4242").hexdigest()
+    started = time.monotonic()
+    found = reverse_lookup({target}, limit=200_000, workers=2)
+    elapsed = time.monotonic() - started
+
+    assert found == 4242
+    assert elapsed < 30, f"reverse_lookup이 {elapsed:.1f}s 걸렸다(정리 실패 의심)"

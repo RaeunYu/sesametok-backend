@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
 import threading
@@ -394,6 +395,15 @@ class Runtime:
         if install_signal_handlers:
             self._install_signal_handlers()
         self.start()
+        if self.managed:
+            # 앱 스텁이 launchd에게 SIGTERM을 받아 죽으면 python 자식은 고아가 되어
+            # 계속 살아남는다(bootout이 main 프로세스만 정지시킨다). 실측으로 확인한
+            # 결함이라, 부모가 사라지면 스스로 종료한다.
+            threading.Thread(
+                target=self._watch_parent,
+                name="sesametok-parent-watch",
+                daemon=True,
+            ).start()
         try:
             if self._menubar_enabled():
                 self._run_menubar()
@@ -404,6 +414,26 @@ class Runtime:
         finally:
             self.shutdown()
         return 0
+
+    def _watch_parent(self, interval: float = 1.0) -> None:
+        """launchd 관리 모드에서 부모(앱 스텁)가 사라지면 스스로 종료한다.
+
+        launchd의 ``bootout``은 잡의 main 프로세스(앱 스텁)만 정지시킨다. 스텁이 죽으면
+        우리는 ``launchd``가 아니라 PID 1에 입양되므로, 그때 스스로 내려간다. 이 장치가
+        없으면 ``stop`` 이후에도 API와 폴러가 계속 살아 있고 ``start``는 락 때문에
+        "이미 실행 중"으로 복구를 거부한다.
+        """
+
+        while not self._stop.wait(interval):
+            if os.getppid() != 1:
+                continue
+            logger.warning("부모 프로세스가 사라졌습니다. 백엔드를 종료합니다.")
+            self.request_stop()
+            try:
+                self.shutdown()
+            except Exception:  # 종료 경로의 실패가 강제 종료를 막아서는 안 된다
+                logger.exception("부모 감시 종료 중 오류")
+            os._exit(0)
 
     def _menubar_enabled(self) -> bool:
         """이 프로세스가 AppKit 메뉴 바를 소유해야 하면 True.
@@ -429,8 +459,10 @@ class Runtime:
         run_menubar(
             self,
             quit_callback=self._menu_quit,
+            restart_callback=self._menu_restart,
             autostart_provider=self.autostart_enabled,
             toggle_autostart=self.toggle_autostart,
+            restart_provider=self.restart_enabled,
         )
 
     def autostart_enabled(self) -> bool:
@@ -495,10 +527,11 @@ class Runtime:
             return None
 
     def _menu_quit(self) -> None:
-        """메뉴 "백엔드 종료": launchd 관리를 해제한 뒤 중지한다.
+        """메뉴 "종료": launchd 관리를 해제한 뒤 중지한다.
 
         ``bootout``이 없으면 launchd ``KeepAlive``가 프로세스를 즉시 다시 시작한다;
         메뉴 바 컨트롤러는 실행 루프를 멈추므로 이후에도 순서 있는 종료가 실행된다.
+        CLI ``sesametok-backend stop``과 같은 경로다.
         """
 
         if self.managed:
@@ -510,6 +543,38 @@ class Runtime:
                     logger.warning("launchctl bootout에 실패했습니다: %s", result.message)
             except Exception:
                 logger.exception("LaunchAgent를 해제하지 못했습니다")
+        self.request_stop()
+
+    def restart_enabled(self) -> bool:
+        """launchd가 이 프로세스를 관리하고 있으면 True.
+
+        메뉴의 "재시작" 항목은 이 값이 참일 때만 활성화되며, 아니면 이유를 제목에
+        담아 비활성으로 남는다(개발용 ``foreground`` 실행은 launchd가 다시 띄우지
+        않으므로 재시작할 대상이 없다).
+        """
+
+        return bool(self.managed)
+
+    def _menu_restart(self) -> None:
+        """메뉴 "재시작": launchd에 제자리 재시작을 요청한 뒤 중지한다.
+
+        ``kickstart -k``가 실행 중인 인스턴스를 종료하고 다시 띄운다. 여기서는 곧바로
+        ``request_stop``을 걸어 메뉴 바 컨트롤러가 런 루프를 멈추게 하고, 순서 있는
+        종료가 끝나면 launchd가 새 프로세스를 시작한다. 관리 대상이 아니면 아무것도
+        하지 않는다(메뉴에서도 비활성이다). ``cli.py``는 임포트하지 않는다.
+        """
+
+        if not self.managed:
+            logger.warning("launchd로 실행 중일 때만 재시작할 수 있습니다")
+            return
+        try:
+            from .launcher import LaunchAgent
+
+            result = LaunchAgent(self.settings).kickstart(restart=True)
+            if not result.ok:
+                logger.warning("launchctl kickstart에 실패했습니다: %s", result.message)
+        except Exception:
+            logger.exception("LaunchAgent를 다시 시작하지 못했습니다")
         self.request_stop()
 
     def _wait_plain(self) -> None:
@@ -536,10 +601,12 @@ class Runtime:
         return {
             "running": self._started,
             "kakaotalk_running": self.diagnostic_report.get("kakaotalk_running"),
-            "permissions_ok": bool(
-                self.diagnostic_report.get("full_disk_access_ok")
-                and self.diagnostic_report.get("accessibility_trusted") is not False
-            ),
+            # 읽기 경로가 실제로 동작하는지를 "준비됨"의 기준으로 삼는다. 전체 디스크
+            # 접근 권한은 카카오톡 저장소가 보호되는 경우에만 필요하다.
+            "permissions_ok": bool(self.diagnostic_report.get("store_readable")),
+            "store_readable": bool(self.diagnostic_report.get("store_readable")),
+            "full_disk_access": self.diagnostic_report.get("full_disk_access"),
+            "accessibility_trusted": self.diagnostic_report.get("accessibility_trusted"),
             "archive_ready": archive_ready,
             "polling": bool(poller and not poller.paused and not poller.stopping),
             "last_sync_at": poller.stats.last_success_at if poller else None,

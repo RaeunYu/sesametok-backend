@@ -202,11 +202,14 @@ class StatusSnapshot:
     summary: str
     kakaotalk_running: bool | None = None
     permissions_ok: bool = True
-    full_disk_access_ok: bool = True
+    store_readable: bool = True
     accessibility_trusted: bool | None = None
     polling: bool = True
     paused: bool = False
     autostart: bool = False
+    managed: bool = False
+    """launchd가 이 프로세스를 관리하면 True이며, 그러면 메뉴의 재시작 항목이 활성화된다."""
+
     webhooks: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
 
 
@@ -221,9 +224,10 @@ def build_snapshot(
     last_sync_at: str | datetime | float | int | None,
     starting: bool,
     room_count: int | None = None,
-    full_disk_access_ok: bool = True,
+    store_readable: bool = True,
     accessibility_trusted: bool | None = None,
     autostart: bool = False,
+    managed: bool = False,
     webhooks: Iterable[Mapping[str, object]] = (),
     now: datetime | float | int | str | None = None,
     failure_threshold: int = FAILURE_THRESHOLD,
@@ -253,11 +257,12 @@ def build_snapshot(
         summary=summary,
         kakaotalk_running=kakaotalk_running,
         permissions_ok=permissions_ok,
-        full_disk_access_ok=full_disk_access_ok,
+        store_readable=store_readable,
         accessibility_trusted=accessibility_trusted,
         polling=polling,
         paused=paused,
         autostart=autostart,
+        managed=managed,
         webhooks=tuple(webhooks),
     )
 
@@ -273,6 +278,7 @@ ACTION_COPY_API_TOKEN = "copy_api_token"
 ACTION_OPEN_LOG = "open_log"
 ACTION_TOGGLE_AUTOSTART = "toggle_autostart"
 ACTION_QUIT = "quit"
+ACTION_RESTART = "restart"
 
 #: 항목 종류: 비활성 상태 줄, 일반 동작, 체크박스, 설명용 비활성 줄, 구분선.
 KIND_STATUS = "status"
@@ -287,6 +293,8 @@ ITEM_KAKAOTALK = "kakaotalk"
 ITEM_PERMISSIONS_FULL_DISK = "permissions_full_disk"
 ITEM_PERMISSIONS_ACCESSIBILITY = "permissions_accessibility"
 ITEM_PERMISSIONS_TARGET = "permissions_target"
+ITEM_PERMISSIONS_FULL_DISK_SETTINGS = "permissions_full_disk_settings"
+ITEM_PERMISSIONS_ACCESSIBILITY_SETTINGS = "permissions_accessibility_settings"
 ITEM_SYNC_NOW = "sync_now"
 ITEM_TOGGLE_PAUSE = "toggle_pause"
 ITEM_COPY_API_TOKEN = "copy_api_token"
@@ -295,6 +303,7 @@ ITEM_AUTOSTART = "autostart"
 ITEM_WEBHOOK_STATUS = "webhook_status"
 ITEM_INFO_UNSUPPORTED = "info_unsupported_types"
 ITEM_INFO_STORAGE = "info_storage"
+ITEM_RESTART = "restart"
 ITEM_QUIT = "quit"
 
 
@@ -314,6 +323,12 @@ def _running_label(running: bool | None) -> str:
     if running is None:
         return "알 수 없음"
     return "실행 중" if running else "꺼짐"
+
+
+def _read_label(ok: bool) -> str:
+    """읽기 가능 여부 라벨(권한 유무가 아니라 실제 접근 가능성)."""
+
+    return "정상" if ok else "권한 필요"
 
 
 def _flag_label(ok: bool | None) -> str:
@@ -353,6 +368,14 @@ def menu_items(
     첫 항목은 비활성 상태 요약이다. 로그인 자동시작 항목은 체크박스이며 상태는
     ``snapshot.autostart``에서 온다. webhook 항목은 비활성 읽기 전용이다(활성 구독
     개수 + 최근 성공 시각이며, URL이나 비밀 값은 결코 넣지 않는다).
+
+    표기는 짧게 유지한다: 권한 상태와 "설정 열기"는 서로 다른 항목으로 나뉘고, 권한을
+    줄 실행 파일 경로 같은 긴 안내는 메뉴에 넣지 않는다(그 정보는 ``status`` 커맨드와
+    로그가 담당한다). ``executable_path`` 인자는 호환성을 위해 남겨 두지만 더 이상
+    메뉴에 그리지 않는다.
+
+    재시작 항목은 launchd가 관리하는 프로세스(``snapshot.managed``)에서만 활성화되며,
+    아니면 이유를 제목에 담아 비활성으로 둔다.
     """
 
     items: list[MenuItem] = [
@@ -360,34 +383,39 @@ def menu_items(
         MenuItem("separator-status", "", False, None, None, KIND_SEPARATOR),
         MenuItem(
             ITEM_KAKAOTALK,
-            f"카카오톡: {_running_label(snapshot.kakaotalk_running)} · 열기",
+            f"카카오톡: {_running_label(snapshot.kakaotalk_running)}",
             True,
             ACTION_OPEN_KAKAOTALK,
         ),
         MenuItem(
             ITEM_PERMISSIONS_FULL_DISK,
-            f"권한 · 전체 디스크 접근: {_flag_label(snapshot.full_disk_access_ok)} · 설정 열기",
+            f"카카오톡 읽기: {_read_label(snapshot.store_readable)}",
+            False,
+            None,
+            None,
+            KIND_INFO,
+        ),
+        MenuItem(
+            ITEM_PERMISSIONS_ACCESSIBILITY,
+            f"손쉬운 사용: {_flag_label(snapshot.accessibility_trusted)}",
+            False,
+            None,
+            None,
+            KIND_INFO,
+        ),
+        MenuItem(
+            ITEM_PERMISSIONS_FULL_DISK_SETTINGS,
+            "전체 디스크 접근 설정 열기",
             True,
             ACTION_OPEN_FULL_DISK_ACCESS,
         ),
         MenuItem(
-            ITEM_PERMISSIONS_ACCESSIBILITY,
-            f"권한 · 손쉬운 사용: {_flag_label(snapshot.accessibility_trusted)} · 설정 열기",
+            ITEM_PERMISSIONS_ACCESSIBILITY_SETTINGS,
+            "손쉬운 사용 설정 열기",
             True,
             ACTION_OPEN_ACCESSIBILITY,
         ),
     ]
-    if executable_path:
-        items.append(
-            MenuItem(
-                ITEM_PERMISSIONS_TARGET,
-                f"권한을 줄 실행 파일: {executable_path}",
-                False,
-                None,
-                None,
-                KIND_INFO,
-            )
-        )
 
     items.extend(
         [
@@ -421,7 +449,7 @@ def menu_items(
             MenuItem("separator-info", "", False, None, None, KIND_SEPARATOR),
             MenuItem(
                 ITEM_INFO_UNSUPPORTED,
-                "지원하지 않는 메시지 타입은 고정 문구로 치환해 저장합니다",
+                "지원하지 않는 메시지 타입: 고정 문구 치환",
                 False,
                 None,
                 None,
@@ -429,14 +457,20 @@ def menu_items(
             ),
             MenuItem(
                 ITEM_INFO_STORAGE,
-                "미디어·이모티콘은 다운로드·저장하지 않습니다 (저장공간·프라이버시)",
+                "미디어·이모티콘: 다운로드·저장하지 않음",
                 False,
                 None,
                 None,
                 KIND_INFO,
             ),
             MenuItem("separator-quit", "", False, None, None, KIND_SEPARATOR),
-            MenuItem(ITEM_QUIT, "백엔드 종료", True, ACTION_QUIT),
+            MenuItem(
+                ITEM_RESTART,
+                "재시작" if snapshot.managed else "재시작 · launchd로 실행 중일 때만",
+                snapshot.managed,
+                ACTION_RESTART,
+            ),
+            MenuItem(ITEM_QUIT, "종료", True, ACTION_QUIT),
         ]
     )
     return items

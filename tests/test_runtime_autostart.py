@@ -39,6 +39,19 @@ def _runtime(settings: Settings) -> Runtime:
     )
 
 
+def _managed_runtime(settings: Settings) -> Runtime:
+    """launchd가 관리하는 것으로 표시된 런타임(메뉴 재시작 대상)."""
+
+    return Runtime(
+        settings,
+        identity_resolver=lambda _s: AccountIdentity(USER_ID, SYNTHETIC_UUID, "test"),
+        archive_key_resolver=lambda _s: ArchiveKey(key=KEY, source="env"),
+        source=QuietSource(),
+        interactive=False,
+        managed=True,
+    )
+
+
 @pytest.fixture
 def stubbed_launchctl(monkeypatch):
     calls: list[str] = []
@@ -51,6 +64,11 @@ def stubbed_launchctl(monkeypatch):
         launcher.LaunchAgent,
         "bootout",
         lambda self: (calls.append("bootout"), SimpleNamespace(ok=True, message=""))[1],
+    )
+    monkeypatch.setattr(
+        launcher.LaunchAgent,
+        "kickstart",
+        lambda self, **kwargs: (calls.append("kickstart"), SimpleNamespace(ok=True, message=""))[1],
     )
     return calls
 
@@ -170,5 +188,52 @@ def test_menu_quit_survives_a_launchctl_failure(env, monkeypatch) -> None:
     )
 
     runtime._menu_quit()  # 그래도 중지를 요청해야 한다
+
+    assert runtime.stopping is True
+
+
+# ------------------------------------------------------------ 메뉴 재시작 (요구 2·3)
+
+
+def test_restart_enabled_follows_managed(env) -> None:
+    settings = Settings.from_env()
+    assert _runtime(settings).restart_enabled() is False
+    assert _managed_runtime(settings).restart_enabled() is True
+
+
+def test_menu_restart_kickstarts_when_managed(env, stubbed_launchctl) -> None:
+    settings = Settings.from_env()
+    runtime = _managed_runtime(settings)
+
+    runtime._menu_restart()
+
+    assert stubbed_launchctl == ["kickstart"]
+    assert runtime.stopping is True
+
+
+def test_menu_restart_is_a_noop_when_unmanaged(env, monkeypatch) -> None:
+    settings = Settings.from_env()
+    runtime = _runtime(settings)  # managed의 기본값은 False
+    monkeypatch.setattr(
+        launcher.LaunchAgent,
+        "kickstart",
+        lambda self, **kwargs: pytest.fail("kickstart must not run for an unmanaged process"),
+    )
+
+    runtime._menu_restart()
+
+    assert runtime.stopping is False
+
+
+def test_menu_restart_survives_a_launchctl_failure(env, monkeypatch) -> None:
+    settings = Settings.from_env()
+    runtime = _managed_runtime(settings)
+    monkeypatch.setattr(
+        launcher.LaunchAgent,
+        "kickstart",
+        lambda self, **kwargs: (_ for _ in ()).throw(RuntimeError("launchctl exploded")),
+    )
+
+    runtime._menu_restart()  # 그래도 중지를 요청해야 한다(launchd KeepAlive가 다시 띄운다)
 
     assert runtime.stopping is True

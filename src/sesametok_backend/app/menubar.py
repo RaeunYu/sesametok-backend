@@ -121,11 +121,13 @@ class RuntimeStatusProvider:
         *,
         archive_interval: float = 30.0,
         autostart_provider: Callable[[], bool] | None = None,
+        restart_provider: Callable[[], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._runtime = runtime
         self._archive_interval = archive_interval
         self._autostart_provider = autostart_provider
+        self._restart_provider = restart_provider
         self._clock = clock
         self._rooms: int | None = None
         self._webhooks: tuple[Mapping[str, object], ...] = ()
@@ -151,9 +153,10 @@ class RuntimeStatusProvider:
             last_sync_at=stats.last_success_at if stats is not None else health.get("last_sync_at"),
             starting=not bool(health.get("running")),
             room_count=rooms,
-            full_disk_access_ok=bool(report.get("full_disk_access_ok", True)),
+            store_readable=bool(report.get("store_readable", False)),
             accessibility_trusted=report.get("accessibility_trusted"),
             autostart=bool(self._autostart_provider()) if self._autostart_provider else False,
+            managed=bool(self._restart_provider()) if self._restart_provider else False,
             webhooks=webhooks,
         )
 
@@ -196,6 +199,7 @@ class MenuBarController(Foundation.NSObject):
         self._status_provider: Callable[[], StatusSnapshot] | None = None
         self._actions: dict[str, Callable[[], None]] = {}
         self._quit_callback: Callable[[], None] = _default_quit
+        self._restart_callback: Callable[[], None] | None = None
         self._executable_path = ""
         self._log_path = ""
         return self
@@ -213,6 +217,7 @@ class MenuBarController(Foundation.NSObject):
         open_log: Callable[[], None] | None = None,
         toggle_autostart: Callable[[], bool | None] | None = None,
         quit: Callable[[], None] | None = None,
+        restart: Callable[[], None] | None = None,
         open_kakaotalk: Callable[[], None] | None = None,
         open_permissions: Callable[[str], None] | None = None,
         executable_path: str = "",
@@ -222,7 +227,8 @@ class MenuBarController(Foundation.NSObject):
 
         로그인 자동시작 콜백은 :func:`_autostart_unavailable`로 기본 설정되어,
         launcher 마일스톤이 실제 콜백을 주입하기 전까지 이 모듈이 ``launcher.py``와
-        독립적으로 유지된다.
+        독립적으로 유지된다. *restart*는 launchd 관리 하에서만 의미가 있으며, 활성
+        여부는 :attr:`StatusSnapshot.managed`가 결정한다.
         """
 
         self._status_provider = status_provider
@@ -235,6 +241,7 @@ class MenuBarController(Foundation.NSObject):
             self.refresh()
 
         self._quit_callback = quit or _default_quit
+        self._restart_callback = restart
         self._actions = {
             status_model.ACTION_SYNC_NOW: lambda: _refresh_after(sync_now),
             status_model.ACTION_TOGGLE_PAUSE: lambda: _refresh_after(toggle_pause),
@@ -253,6 +260,7 @@ class MenuBarController(Foundation.NSObject):
                 diagnostics.ACCESSIBILITY_URL
             ),
             status_model.ACTION_QUIT: self._quit,
+            status_model.ACTION_RESTART: self._restart,
         }
 
     @objc.python_method
@@ -264,6 +272,29 @@ class MenuBarController(Foundation.NSObject):
         finally:
             # 기본 콜백은 NSApp을 종료한다. 런타임 콜백은 런타임을 중지 상태로
             # 표시할 뿐이므로, 여기서 루프를 멈추는 것이 항상 옳다.
+            self.stop()
+
+    @objc.python_method
+    def _restart(self) -> None:
+        """주입된 재시작 콜백을 실행하고 런 루프를 멈춰 순서 있는 종료를 유도한다.
+
+        런타임 콜백이 ``launchctl kickstart -k``로 재시작을 요청하므로 launchd가 곧
+        프로세스를 다시 띄운다. 콜백이 없으면 아무것도 하지 않는다(비관리 프로세스는
+        메뉴에서 항목이 비활성이라 여기까지 오지 않는다).
+        """
+
+        if self._restart_callback is None:
+            logger.warning("재시작 콜백이 설정되지 않았습니다")
+            return
+        snapshot = self._snapshot
+        if snapshot is None or not snapshot.managed:
+            # 메뉴에서도 비활성이지만, 여기서 한 번 더 막아 비관리 프로세스가
+            # 실수로 런 루프를 멈추지 않게 한다.
+            logger.warning("launchd로 실행 중일 때만 재시작할 수 있습니다")
+            return
+        try:
+            self._restart_callback()
+        finally:
             self.stop()
 
     # --------------------------------------------------------------- 설치
@@ -494,20 +525,27 @@ def run_menubar(
     refresh_seconds: float = 1.0,
     archive_interval: float = 30.0,
     quit_callback: Callable[[], None] | None = None,
+    restart_callback: Callable[[], None] | None = None,
     autostart_provider: Callable[[], bool] | None = None,
     toggle_autostart: Callable[[], bool | None] | None = None,
+    restart_provider: Callable[[], bool] | None = None,
 ) -> int:
     """*runtime*에서 메뉴바를 만들고 AppKit 이벤트 루프를 실행한다.
 
     루프를 멈추는 종료 훅을 등록하므로 어느 스레드에서든 ``runtime.shutdown()``이
     동작한다. *quit_callback*은 "백엔드 종료"를 처리하며, 기본값은
-    ``NSApplication``을 종료하는 것이다. *autostart_provider*는 로그인 자동시작
-    체크박스를 채우고, *toggle_autostart*는 그 값을 바꾼다. 메인 스레드에서
-    호출해야 한다.
+    ``NSApplication``을 종료하는 것이다. *restart_callback*은 launchd 관리 하에서
+    프로세스를 재시작한다. *autostart_provider*는 로그인 자동시작 체크박스를 채우고,
+    *toggle_autostart*는 그 값을 바꾼다. *restart_provider*는 재시작 항목의 활성
+    여부(launchd 관리 여부)를 알려 주어, 비활성일 때 메뉴가 이유를 표시할 수 있게
+    한다. 메인 스레드에서 호출해야 한다.
     """
 
     provider = RuntimeStatusProvider(
-        runtime, archive_interval=archive_interval, autostart_provider=autostart_provider
+        runtime,
+        archive_interval=archive_interval,
+        autostart_provider=autostart_provider,
+        restart_provider=restart_provider,
     )
     controller = MenuBarController.alloc().init()
     controller.configure(
@@ -518,6 +556,7 @@ def run_menubar(
         copy_api_token=lambda: runtime.api_token,
         open_log=lambda: open_path(str(runtime.settings.backend_log_path)),
         quit=quit_callback,
+        restart=restart_callback,
         executable_path=diagnostics.python_executable(),
         log_path=str(runtime.settings.backend_log_path),
     )

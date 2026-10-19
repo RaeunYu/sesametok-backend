@@ -21,6 +21,8 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("SESAMETOK_LOG_DIR", str(logs))
     # 테스트가 실제 ~/Library/LaunchAgents에 기록하지 않게 한다.
     monkeypatch.setenv("SESAMETOK_LAUNCHD_PLIST", str(tmp_path / "agent.plist"))
+    # 테스트가 실제 /Applications의 앱 번들을 보지 않게 한다.
+    monkeypatch.setenv("SESAMETOK_APP_BUNDLE", str(tmp_path / "SesametokBackend.app"))
     # 단위 테스트에는 리스닝 소켓이 필요 없다.
     monkeypatch.setenv("SESAMETOK_API", "0")
     monkeypatch.delenv("SESAMETOK_API_TOKEN", raising=False)

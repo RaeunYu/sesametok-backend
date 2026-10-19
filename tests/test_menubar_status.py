@@ -201,12 +201,15 @@ def test_menu_includes_required_items() -> None:
         status_model.ITEM_KAKAOTALK,
         status_model.ITEM_PERMISSIONS_FULL_DISK,
         status_model.ITEM_PERMISSIONS_ACCESSIBILITY,
+        status_model.ITEM_PERMISSIONS_FULL_DISK_SETTINGS,
+        status_model.ITEM_PERMISSIONS_ACCESSIBILITY_SETTINGS,
         status_model.ITEM_SYNC_NOW,
         status_model.ITEM_TOGGLE_PAUSE,
         status_model.ITEM_COPY_API_TOKEN,
         status_model.ITEM_OPEN_LOG,
         ITEM_AUTOSTART,
         ITEM_WEBHOOK_STATUS,
+        status_model.ITEM_RESTART,
         status_model.ITEM_QUIT,
     ):
         assert required in ids, required
@@ -214,7 +217,49 @@ def test_menu_includes_required_items() -> None:
     assert _by_id(items, status_model.ITEM_STATUS).title == _snapshot(room_count=42).summary
     assert _by_id(items, status_model.ITEM_STATUS).enabled is False
     assert _by_id(items, status_model.ITEM_QUIT).action == status_model.ACTION_QUIT
+    assert _by_id(items, status_model.ITEM_QUIT).title == "종료"
     assert _by_id(items, status_model.ITEM_QUIT).enabled is True
+
+
+def test_permission_state_and_settings_are_short_and_separate() -> None:
+    """요구 1: 권한 상태는 짧게, 설정 열기는 별도 항목, 긴 실행 파일 경로는 제거."""
+
+    items = menu_items(_snapshot(accessibility_trusted=False), executable_path="/tmp/python")
+
+    full_disk = _by_id(items, status_model.ITEM_PERMISSIONS_FULL_DISK)
+    accessibility = _by_id(items, status_model.ITEM_PERMISSIONS_ACCESSIBILITY)
+    assert full_disk.title == "카카오톡 읽기: 정상"
+    assert accessibility.title == "손쉬운 사용: 필요"
+    for item in (full_disk, accessibility):
+        assert item.kind == status_model.KIND_INFO
+        assert item.enabled is False and item.action is None
+        assert "설정 열기" not in item.title
+        assert "권한 · " not in item.title
+
+    # 설정 열기는 각 권한의 기존 딥링크를 그대로 쓰는 별도 항목이다.
+    fda = _by_id(items, status_model.ITEM_PERMISSIONS_FULL_DISK_SETTINGS)
+    ax = _by_id(items, status_model.ITEM_PERMISSIONS_ACCESSIBILITY_SETTINGS)
+    assert fda.enabled is True and fda.action == status_model.ACTION_OPEN_FULL_DISK_ACCESS
+    assert ax.enabled is True and ax.action == status_model.ACTION_OPEN_ACCESSIBILITY
+    assert "설정 열기" in fda.title and "설정 열기" in ax.title
+
+    # 실행 파일 경로 같은 긴 안내는 메뉴에서 사라진다(상태 커맨드·로그가 담당).
+    assert status_model.ITEM_PERMISSIONS_TARGET not in {item.item_id for item in items}
+    assert not any("/tmp/python" in item.title for item in items)
+
+
+def test_restart_is_disabled_with_a_reason_when_unmanaged() -> None:
+    item = _by_id(menu_items(_snapshot(managed=False)), status_model.ITEM_RESTART)
+    assert item.action == status_model.ACTION_RESTART
+    assert item.enabled is False
+    assert item.title == "재시작 · launchd로 실행 중일 때만"
+
+
+def test_restart_is_enabled_when_managed() -> None:
+    item = _by_id(menu_items(_snapshot(managed=True)), status_model.ITEM_RESTART)
+    assert item.action == status_model.ACTION_RESTART
+    assert item.enabled is True
+    assert item.title == "재시작"
 
 
 def test_menu_has_no_media_or_emoticon_toggle() -> None:

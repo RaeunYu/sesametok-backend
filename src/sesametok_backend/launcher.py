@@ -51,9 +51,7 @@ PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
   <key>Label</key><string>{label}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{python}</string>
-    <string>-m</string><string>{module}</string>
-    <string>foreground</string><string>--managed</string>
+{arguments}
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -226,6 +224,19 @@ def require_plist_path_allowed(plist_path: Path) -> None:
     )
 
 
+def program_arguments(settings: Settings) -> list[str]:
+    """LaunchAgent가 실행할 argv.
+
+    ``packaging/build_app.py``로 만든 앱 번들이 있으면 **앱 실행 파일**을 쓴다. 그러면
+    TCC 권한이 앱에 귀속되고 공용 인터프리터는 아무 권한도 얻지 않는다. 앱이 없으면
+    이전과 같이 인터프리터를 직접 부른다.
+    """
+
+    if settings.app_installed():
+        return [str(settings.app_executable), "--managed"]
+    return [str(settings.python_executable), "-m", MODULE_NAME, "foreground", "--managed"]
+
+
 def render_plist(settings: Settings, *, label: str = LAUNCHD_LABEL) -> str:
     """실제 절대 경로를 채워 LaunchAgent XML을 렌더링한다.
 
@@ -233,10 +244,13 @@ def render_plist(settings: Settings, *, label: str = LAUNCHD_LABEL) -> str:
     경로는 이스케이프되므로 운 나쁜 홈 디렉터리가 XML을 깨뜨릴 수 없다.
     """
 
+    arguments = "\n".join(
+        f"    <string>{_xml_escape(argument)}</string>"
+        for argument in program_arguments(settings)
+    )
     return PLIST_TEMPLATE.format(
         label=_xml_escape(label),
-        python=_xml_escape(str(settings.python_executable)),
-        module=MODULE_NAME,
+        arguments=arguments,
         stdout=_xml_escape(str(settings.log_dir / "out.log")),
         stderr=_xml_escape(str(settings.log_dir / "err.log")),
         path=LAUNCHD_PATH,

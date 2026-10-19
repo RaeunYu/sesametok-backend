@@ -107,10 +107,20 @@ def cmd_start(args: argparse.Namespace) -> int:
         return EXIT_FAILURE
 
     owner = running_pid(settings)
-    if agent.is_running() or owner is not None:
+    if agent.is_running():
         suffix = f" (pid {owner})" if owner else ""
         print(f"sesametok-backend가 이미 실행 중입니다{suffix}. 할 일이 없습니다.")
         return EXIT_OK
+    if owner is not None:
+        # launchd가 관리하지 않는데 락을 잡고 있는 프로세스는 고아다(bootout이 앱 스텁만
+        # 정지시킨 경우). 정리하지 않으면 start가 영원히 "이미 실행 중"으로 복구를 거부한다.
+        if not terminate_process(owner, timeout=STOP_TIMEOUT_SECONDS):
+            print(
+                f"sesametok-backend: 이전 프로세스 {owner}이(가) 남아 있어 시작할 수 없습니다.",
+                file=sys.stderr,
+            )
+            return EXIT_FAILURE
+        print(f"이전에 남은 프로세스 {owner}을(를) 정리했습니다.")
 
     if not agent.plist_path.exists():
         agent.install_plist()
@@ -146,7 +156,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
         return EXIT_FAILURE
 
     owner = running_pid(settings)
-    # 실제로 설치한 plist에 대해서만 launchd에 묻는다.
+    # 실제로 등록한 plist에 대해서만 launchd에 묻는다.
     loaded = agent.is_loaded() if agent.plist_path.exists() else False
     if not loaded and owner is None:
         print("sesametok-backend가 실행 중이 아닙니다.")
@@ -163,6 +173,17 @@ def cmd_stop(args: argparse.Namespace) -> int:
         if not wait_until_stopped(agent, timeout=STOP_TIMEOUT_SECONDS):
             print(
                 "sesametok-backend: LaunchAgent가 아직 실행 중입니다; 다시 시도하세요.",
+                file=sys.stderr,
+            )
+            return EXIT_FAILURE
+        # bootout은 잡의 main 프로세스(앱 스텁)만 정지시킨다. python 자식이 고아로 남으면
+        # 여기서 정리한다(실측: 이 정리가 없으면 API와 폴러가 계속 살아 있었다).
+        leftover = running_pid(settings)
+        if leftover is not None and not terminate_process(
+            leftover, timeout=STOP_TIMEOUT_SECONDS
+        ):
+            print(
+                f"sesametok-backend: 남은 프로세스 {leftover}을(를) 중지하지 못했습니다.",
                 file=sys.stderr,
             )
             return EXIT_FAILURE
@@ -225,15 +246,15 @@ def cmd_restart(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def cmd_install(args: argparse.Namespace) -> int:
-    """plist를 쓰고 bootstrap한 뒤 TCC 권한 부여 대상을 안내한다."""
+def cmd_register(args: argparse.Namespace) -> int:
+    """login 항목에 등록한다: plist를 쓰고 bootstrap한 뒤 TCC 권한 부여 대상을 안내한다."""
 
     settings = Settings.from_env()
     agent = _launch_agent(settings)
     if not _require_managed_plist(agent):
         return EXIT_FAILURE
     path = agent.install_plist()
-    print(f"LaunchAgent를 기록했습니다: {path}")
+    print(f"로그인 시 자동시작 plist를 기록했습니다: {path}")
 
     result = agent.bootstrap()
     if not result.ok and not agent.is_loaded():
@@ -242,21 +263,22 @@ def cmd_install(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_FAILURE
-    print("로그인 자동 시작을 켰습니다 (RunAtLoad + KeepAlive).")
+    print("로그인 시 자동시작을 켰습니다 (RunAtLoad + KeepAlive).")
 
     print()
-    print("macOS는 전체 디스크 접근 권한과 손쉬운 사용 권한을 책임 프로세스에")
-    print("귀속시키므로, LaunchAgent를 쓰면 launchd가 실행하는 실행 파일에")
-    print("권한을 주어야 합니다 — Terminal이 아닙니다.")
-    print(f"  권한 부여 대상: {diagnostics.python_executable()}")
-    print("  시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한")
-    print("  그다음 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용")
-    print("  (`sesametok-backend permissions` / `--accessibility`가 해당 창을 엽니다)")
+    print("macOS 권한은 책임 프로세스에 귀속됩니다. 앱 번들이 있으면 **앱 하나에만** 주면 되고,")
+    print("공용 인터프리터는 아무 권한도 얻지 않습니다 — Terminal도 아닙니다.")
+    target = settings.tcc_grant_target
+    kind = "앱" if settings.app_installed() else "실행 파일(앱을 먼저 빌드하면 앱에 줄 수 있습니다)"
+    print(f"  권한 부여 대상({kind}): {target}")
+    print("  시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용   (발신에 필요)")
+    print("  (전체 디스크 접근 권한은 보통 필요하지 않습니다 — 읽기가 실패할 때만 주세요)")
+    print("  (`sesametok-backend permissions --accessibility`가 해당 창을 엽니다)")
     return EXIT_OK
 
 
-def cmd_uninstall(args: argparse.Namespace) -> int:
-    """bootout하고 plist를 제거한 뒤 디스크에 남은 것을 알린다."""
+def cmd_unregister(args: argparse.Namespace) -> int:
+    """login 항목에서 해제한다: bootout하고 plist를 제거한 뒤 남은 것을 알린다."""
 
     settings = Settings.from_env()
     agent = _launch_agent(settings)
@@ -282,9 +304,9 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         return EXIT_FAILURE
 
     print(
-        f"LaunchAgent를 제거했습니다: {agent.plist_path}"
+        f"로그인 시 자동시작 등록을 해제했습니다: {agent.plist_path}"
         if removed
-        else f"LaunchAgent가 {agent.plist_path}에 설치되어 있지 않았습니다."
+        else f"로그인 시 자동시작이 등록되어 있지 않았습니다: {agent.plist_path}"
     )
     print(f"데이터는 그대로 두었습니다: {settings.data_dir}")
     print(f"로그는 그대로 두었습니다: {settings.log_dir}")
@@ -318,10 +340,47 @@ def cmd_archive_key(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _backend_permissions(settings: Settings) -> dict | None:
+    """실행 중인 백엔드가 **스스로 잰** 권한 상태. 못 물으면 ``None``.
+
+    권한은 프로세스마다 다르다. 앱이 띄운 백엔드는 손쉬운 사용을 물려받았지만 이 CLI를
+    실행한 터미널은 그렇지 않다. 그래서 백엔드가 살아 있으면 그쪽 판정을 우선한다.
+    """
+
+    import urllib.request
+
+    try:
+        token = load_or_create_token(settings)
+        request = urllib.request.Request(
+            f"http://{settings.host}:{settings.port}/v1/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(request, timeout=2.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    permissions = payload.get("permissions")
+    return permissions if isinstance(permissions, dict) else None
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
     pid = running_pid(settings)
     report = diagnostics.collect(settings, store.store_roots())
+    # 실행 중인 백엔드가 있으면 그 프로세스의 권한 판정을 쓴다(터미널과 다를 수 있다).
+    live = _backend_permissions(settings) if pid is not None else None
+    permission_source = "터미널"
+    if live:
+        permission_source = "백엔드"
+        for key in (
+            "accessibility_trusted",
+            "store_readable",
+            "full_disk_access",
+            "grant_target",
+            "grant_target_is_app",
+        ):
+            if key in live:
+                report[key] = live[key]
     agent = _launch_agent(settings)
     plist_installed = agent.plist_path.exists()
     # 읽기 전용 조회이며, 살펴봐도 되는 경로에만 수행한다.
@@ -349,7 +408,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         return EXIT_OK
 
     if not plist_installed:
-        launchd_line = "설치되지 않음"
+        launchd_line = "등록되지 않음"
     elif launchd.running:
         launchd_line = "실행 중" + (f" (pid {launchd.pid})" if launchd.pid else "")
     elif launchd.loaded:
@@ -367,9 +426,13 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"{_label('카카오톡')} "
           + ("실행 중" if report["kakaotalk_running"] else
              ("설치됨, 실행 중 아님" if report["kakaotalk_installed"] else "설치되지 않음")))
-    print(f"{_label('전체 디스크 접근')} {'정상' if report['full_disk_access_ok'] else '없음'}")
+    print(f"{_label('카카오톡 읽기')} {'가능' if report['store_readable'] else '불가'}")
+    fda = report.get("full_disk_access")
+    print(f"{_label('전체 디스크 접근')} "
+          + ("부여됨" if fda else ("부여 안 됨" if fda is False else "알 수 없음")))
     ax = report["accessibility_trusted"]
-    print(f"{_label('손쉬운 사용')} {'정상' if ax else ('없음' if ax is False else '알 수 없음')}")
+    print(f"{_label('손쉬운 사용')} {'정상' if ax else ('없음' if ax is False else '알 수 없음')}"
+          + f"   (권한 측정: {permission_source})")
     for line in diagnostics.permission_guidance(report):
         print()
         print(line)
@@ -418,8 +481,14 @@ def cmd_permissions(args: argparse.Namespace) -> int:
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"sesametok-backend: 시스템 설정을 열지 못했습니다: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    print("시스템 설정을 열었습니다. 다음 실행 파일에 권한을 부여하세요:")
-    print(f"  {diagnostics.python_executable()}")
+    settings = Settings.from_env()
+    target = settings.tcc_grant_target
+    kind = "앱" if settings.app_installed() else "실행 파일"
+    print(f"시스템 설정을 열었습니다. 다음 {kind}에 권한을 부여하세요:")
+    print(f"  {target}")
+    if not settings.app_installed():
+        print("  (앱을 빌드하면 권한을 앱 하나에만 줄 수 있습니다: "
+              "packaging/build_app.py)")
     return EXIT_OK
 
 
@@ -448,13 +517,15 @@ def build_parser() -> argparse.ArgumentParser:
     restart = sub.add_parser("restart", help="백엔드를 재시작합니다")
     restart.set_defaults(handler=cmd_restart)
 
-    install = sub.add_parser("install", help="LaunchAgent를 등록합니다 (로그인 시 시작)")
-    install.set_defaults(handler=cmd_install)
-
-    uninstall = sub.add_parser(
-        "uninstall", help="LaunchAgent를 해제하고 백엔드를 중지합니다"
+    register = sub.add_parser(
+        "register", help="로그인 시 자동시작을 등록합니다 (launchd LaunchAgent)"
     )
-    uninstall.set_defaults(handler=cmd_uninstall)
+    register.set_defaults(handler=cmd_register)
+
+    unregister = sub.add_parser(
+        "unregister", help="로그인 시 자동시작 등록을 해제하고 백엔드를 중지합니다"
+    )
+    unregister.set_defaults(handler=cmd_unregister)
 
     foreground = sub.add_parser("foreground", help="개발용: 이 터미널에서 실행합니다")
     foreground.add_argument(
@@ -486,7 +557,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     permissions = sub.add_parser("permissions", help="macOS 권한 설정 창을 엽니다")
     permissions.add_argument(
-        "--accessibility", action="store_true", help="전체 디스크 접근 권한 대신 손쉬운 사용을 엽니다"
+        "--accessibility", action="store_true", help="전체 디스크 접근 대신 손쉬운 사용 설정 창을 엽니다"
     )
     permissions.set_defaults(handler=cmd_permissions)
 

@@ -23,8 +23,8 @@ def test_parser_has_the_documented_commands() -> None:
         "logs",
         "token",
         "foreground",
-        "install",
-        "uninstall",
+        "register",
+        "unregister",
         "permissions",
         "archive-key",
     } <= commands
@@ -55,7 +55,7 @@ def test_lifecycle_commands_are_wired() -> None:
         if action.__class__.__name__ == "_SubParsersAction"
     ]
     choices = actions[0].choices
-    for command in ("start", "stop", "restart", "install", "uninstall"):
+    for command in ("start", "stop", "restart", "register", "unregister"):
         assert choices[command].get_default("handler") is not None
 
 
@@ -107,3 +107,118 @@ def test_version_flag_exits() -> None:
     with pytest.raises(SystemExit) as excinfo:
         main(["--version"])
     assert excinfo.value.code == 0
+
+
+# --------------------------------------------------- 권한 출처 · 고아 프로세스 복구
+
+
+class _AgentStub:
+    """cmd_start/cmd_stop이 쓰는 LaunchAgent의 최소 대역."""
+
+    def __init__(self, path, *, running: bool = False, loaded: bool = False) -> None:
+        self._path = path
+        self._running = running
+        self._loaded = loaded
+        self.bootstrapped = False
+        self.booted_out = False
+
+    @property
+    def plist_path(self):
+        return self._path
+
+    def is_running(self) -> bool:
+        return self._running
+
+    def is_loaded(self) -> bool:
+        return self._loaded
+
+    def install_plist(self):
+        return self.plist_path
+
+    def bootstrap(self):
+        from types import SimpleNamespace
+
+        self.bootstrapped = True
+        return SimpleNamespace(ok=True, message="")
+
+    def kickstart(self, *, restart: bool = True):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(ok=True, message="")
+
+    def bootout(self):
+        from types import SimpleNamespace
+
+        self.booted_out = True
+        return SimpleNamespace(ok=True, message="")
+
+    def status(self):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(pid=4321, loaded=self._loaded, running=self._running, state="running")
+
+
+def test_status_prefers_the_running_backend_view(env, monkeypatch, capsys) -> None:
+    import sesametok_backend.cli as cli
+
+    monkeypatch.setattr(cli, "running_pid", lambda settings: 4242)
+    monkeypatch.setattr(
+        cli,
+        "_backend_permissions",
+        lambda settings: {
+            "accessibility_trusted": True,
+            "store_readable": True,
+            "full_disk_access": False,
+            "grant_target": "/Applications/SesametokBackend.app",
+            "grant_target_is_app": True,
+        },
+    )
+
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "정상" in out
+    assert "권한 측정: 백엔드" in out
+
+
+def test_status_falls_back_to_the_terminal_view(env, monkeypatch, capsys) -> None:
+    import sesametok_backend.cli as cli
+
+    monkeypatch.setattr(cli, "running_pid", lambda settings: None)
+
+    assert main(["status"]) == 0
+    assert "권한 측정: 터미널" in capsys.readouterr().out
+
+
+def test_stop_cleans_up_an_orphaned_child(env, monkeypatch, capsys) -> None:
+    """bootout은 앱 스텁만 정지시킨다. 자식이 남으면 stop이 그것까지 정리해야 한다."""
+
+    import sesametok_backend.cli as cli
+
+    agent = _AgentStub(env / "agent.plist", running=True, loaded=True)
+    agent.plist_path.write_text("<plist/>", encoding="utf-8")
+    terminated: list[int] = []
+    monkeypatch.setattr(cli, "_launch_agent", lambda settings: agent)
+    monkeypatch.setattr(cli, "running_pid", lambda settings: 9999)
+    monkeypatch.setattr(cli, "wait_until_stopped", lambda agent, timeout: True)
+    monkeypatch.setattr(cli, "terminate_process", lambda pid, timeout=5.0: terminated.append(pid) or True)
+
+    assert main(["stop"]) == 0
+    assert agent.booted_out is True
+    assert terminated == [9999]
+
+
+def test_start_recovers_from_an_orphaned_child(env, monkeypatch, capsys) -> None:
+    """launchd가 언로드됐는데 락만 잡고 있는 고아를 정리하고 기동해야 한다."""
+
+    import sesametok_backend.cli as cli
+
+    agent = _AgentStub(env / "agent.plist", running=False, loaded=False)
+    terminated: list[int] = []
+    monkeypatch.setattr(cli, "_launch_agent", lambda settings: agent)
+    monkeypatch.setattr(cli, "running_pid", lambda settings: 9999)
+    monkeypatch.setattr(cli, "terminate_process", lambda pid, timeout=5.0: terminated.append(pid) or True)
+    monkeypatch.setattr(cli, "wait_until_running", lambda agent, timeout: True)
+
+    assert main(["start"]) == 0
+    assert terminated == [9999]
+    assert agent.bootstrapped is True

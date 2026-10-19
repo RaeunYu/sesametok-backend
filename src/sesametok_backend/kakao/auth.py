@@ -11,6 +11,7 @@ import json
 import logging
 import multiprocessing
 import os
+import signal
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -111,6 +112,21 @@ def _scan_range(args: tuple[int, int, frozenset[str]]) -> int | None:
     return None
 
 
+def _reset_signal_handlers_in_worker() -> None:
+    """Pool 워커가 부모의 SIGTERM/SIGINT 핸들러를 물려받지 않게 한다.
+
+    부모는 시작 단계에서 인터럽트 가능하도록 SIGTERM 핸들러를 설치한다. ``fork``로
+    만들어진 워커가 그 핸들러를 물려받으면 ``Pool.terminate()``의 SIGTERM을 삼켜
+    죽지 않고, 부모는 ``join()``에서 영원히 멈춘다(실측).
+    """
+
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(signum, signal.SIG_DFL)
+        except (ValueError, OSError):  # pragma: no cover - 방어적
+            pass
+
+
 def reverse_lookup(
     target_hashes: Iterable[str],
     *,
@@ -151,15 +167,21 @@ def reverse_lookup(
 
     methods = multiprocessing.get_all_start_methods()
     context = multiprocessing.get_context("fork") if "fork" in methods else multiprocessing
-    with context.Pool(processes=worker_count) as pool:
+    pool = context.Pool(
+        processes=worker_count, initializer=_reset_signal_handlers_in_worker
+    )
+    try:
         for found in pool.imap_unordered(_scan_range, ranges):
             if stopping():
-                pool.terminate()
                 return None
             if found is not None:
-                pool.terminate()
                 return found
-    return None
+        return None
+    finally:
+        # 워커가 부모의 SIGTERM 핸들러를 물려받으면 terminate가 먹히지 않아 join이
+        # 영원히 멈춘다(실측). _reset_signal_handlers_in_worker가 그것을 막는다.
+        pool.terminate()
+        pool.join()
 
 
 # ------------------------------------------------------------------- 해석

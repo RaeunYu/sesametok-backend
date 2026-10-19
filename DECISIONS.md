@@ -295,3 +295,139 @@ placeholder로 치환할 때는 원본 raw 값을 `original_message_type`에 보
 `run_foreground`의 **메뉴바 포함 실기동**은 여전히 육안 확인이 필요하다(라이브 검증은
 `SESAMETOK_NO_MENUBAR=1` 경로로 수행했다). `_menu_quit`의 launchd 해제 경로는 실 launchd 대신
 스텁 테스트로 고정했다(`tests/test_runtime_autostart.py`).
+
+---
+
+## ADR-015. 권한은 앱 번들 하나에 귀속시킨다 (Accepted, 실측 검증)
+
+**문제.** 권한 안내가 공용 pyenv 인터프리터(`~/.pyenv/versions/3.13.3/bin/python3.13`)를 가리켰다.
+그러면 **같은 인터프리터를 쓰는 모든 프로젝트가 전체 디스크 접근·손쉬운 사용을 함께 얻고**, 경로가
+`.pyenv` 숨김 폴더라 시스템 설정의 `+`로 추가하기도 어렵다.
+
+**결정.** `SesametokBackend.app`(얇은 스텁, `LSUIElement`)을 만들어 권한 대상으로 삼는다.
+스텁은 파이썬을 **번들하지 않고** `Contents/Resources/target`에 적힌 인터프리터를 **자식으로
+spawn**하며(exec 금지), 자신은 부모로 남는다. LaunchAgent의 `ProgramArguments`도 이 앱을 가리킨다.
+
+**실측 근거.** 동일한 `/Users/.../.venv/bin/python`을 여러 컨텍스트에서 실행한 결과:
+
+| 실행 경로 | FDA 게이트 경로 | `AXIsProcessTrusted()` |
+|---|---|---|
+| Finder 더블클릭 | 4/4 허용 | True |
+| `open` (LaunchServices) | 4/4 허용 | True |
+| launchd (LaunchAgent) | 4/4 허용 | True |
+| 셸에서 같은 python | 0/4 | False |
+| 공용 pyenv python 직접 | 0/4 | — |
+
+FDA 게이트 경로는 `~/Library/Safari`, `~/Library/Mail`, `~/Library/Messages`,
+`~/Library/Containers/com.apple.Safari`다. 즉 **앱에 준 권한이 그 앱이 띄운 자식에게만 적용**되고,
+공용 인터프리터는 영향을 받지 않는다. 실행 방식(Finder/`open`/launchd)은 결과에 영향이 없었고,
+유일한 변수는 시스템 설정의 **토글 ON/OFF**였다 — 목록에 보이는 것만으로는 부족하다.
+
+**구현.** `packaging/stub.c` + `packaging/Info.plist.tmpl` + `packaging/build_app.py`.
+앱이 없으면 이전과 같이 인터프리터를 대상으로 삼는다(하위 호환). 앱을 다시 빌드하면 cdhash가
+바뀌어 부여된 권한이 무효가 되므로, 경로를 고정하고 재빌드 후 다시 부여하도록 안내한다.
+
+**동작.** 인자 없이 실행(더블클릭)하면 CLI `start`와 같은 일을 한다: plist가 없으면 등록하고
+launchd로 기동하며, 이미 실행 중이면 아무것도 하지 않는다. `--managed`는 LaunchAgent가 넘긴다.
+
+## ADR-016. `전체 디스크 접근: 정상` 오표기 수정 (Accepted)
+
+**문제.** `full_disk_access_ok()`는 **카카오톡 저장소를 나열할 수 있는가**만 검사했다. 이 머신에서
+카카오톡 컨테이너는 TCC 보호 대상이 아니라 **전체 디스크 접근 권한 없이도 읽혔고**, 그래서 FDA가
+0개인데도 `status`가 `전체 디스크 접근: 정상`이라고 표시했다. 게다가 필요하지도 않은 권한을
+사용자에게 요구했다.
+
+**결정.** 두 개념을 분리한다.
+
+- `store_readable(roots)` — 제품이 실제로 필요로 하는 조건("지금 읽을 수 있는가").
+- `full_disk_access_granted()` — TCC가 보호하는 경로(`~/Library/Safari` 등)를 읽어 판정한 **실제
+  권한 보유 여부**. 그런 경로가 없으면 `None`(판정 불가). **카카오톡 저장소는 판정에 쓰지 않는다.**
+
+**영향.**
+- `collect()`가 `store_readable`과 `full_disk_access`를 함께 보고하고 `full_disk_access_ok`는 제거됐다.
+- `permission_guidance()`는 **읽기가 실패할 때만** 전체 디스크 접근을 요구한다. 판정만 되고 읽히면
+  아무것도 요구하지 않는다(정보 제공도 하지 않는다).
+- `/health`의 `permissions_ok`는 `store_readable`을 뜻하게 됐고, `store_readable`·`full_disk_access`·
+  `accessibility_trusted`가 함께 실린다.
+- 메뉴바의 권한 줄은 `전체 디스크 접근:` → **`카카오톡 읽기:`**(실제 접근 가능성)로 바뀌었고,
+  `status`는 `카카오톡 읽기: 가능|불가`와 `전체 디스크 접근: 부여됨|부여 안 됨|알 수 없음`을 따로 보여준다.
+
+---
+
+## ADR-017. 전체 디스크 접근 권한은 필요하지 않다 (Accepted)
+
+**정정.** ~~이 프로젝트는 전체 디스크 접근 권한이 카카오톡 DB 읽기에 필요하다.~~ **필요하지 않다.**
+실제로 필요한 권한은 **손쉬운 사용 하나**뿐이며, 그것도 발신에만 필요하다.
+
+**이유(실측).** 카카오톡 컨테이너
+(`~/Library/Containers/com.kakao.KakaoTalkMac/Data/Library/Application Support/com.kakao.KakaoTalkMac`)는
+**TCC 보호 대상이 아니다.** 같은 사용자로 도는 프로세스는 전체 디스크 접근 권한 없이 디렉터리를
+나열하고 284.8MB DB를 읽을 수 있었다. 대조군으로 `~/Library/Safari`, `~/Library/Mail`,
+`~/Library/Messages`, `~/Library/Containers/com.apple.Safari`는 같은 조건에서
+`Operation not permitted`였다 — TCC는 "샌드박스 컨테이너"라는 이유가 아니라 **경로별로** 보호한다.
+Apple 자체 앱 컨테이너는 보호되지만 제3자 앱 컨테이너는 그렇지 않다.
+
+**운영.**
+- 안내는 **손쉬운 사용**을 기본으로 하고, 전체 디스크 접근은 `store_readable == False`일 때만 요구한다.
+- `status`는 `카카오톡 읽기: 가능|불가`와 `전체 디스크 접근: 부여됨|부여 안 됨|알 수 없음`을 따로
+  보여준다. 뒤쪽은 TCC 보호 경로로 판정한 **실제 권한 보유 여부**이며, 필요성과는 별개다.
+- 이 문서를 포함한 모든 문서에서 "전체 디스크 접근이 필요하다"는 서술은 취소선으로 정정한다.
+
+---
+
+## ADR-018. 앱 수명주기 결함 2건과 `status` 권한 출처 수정 (Accepted)
+
+앱을 launchd로 실제 기동하면서 드러난 결함이다. 셋 다 실측으로 재현하고 고쳤다.
+
+### (1) 역추적 워커가 부모의 SIGTERM 핸들러를 물려받아 `join()`이 멈춘다
+
+`run_foreground`는 시작 단계의 긴 작업(역추적)을 인터럽트할 수 있도록 **Pool 생성 전에**
+SIGTERM 핸들러를 설치한다. `fork`로 만들어진 워커가 그 핸들러를 상속하면
+`Pool.terminate()`의 SIGTERM을 **삼켜 죽지 않고**, 부모는 `join()`에서 영원히 멈춘다.
+실측: 워커 10개가 4분 넘게 살아 있었고 아카이브가 만들어지지 않았다.
+
+**수정.** `Pool(initializer=_reset_signal_handlers_in_worker)`로 워커에서 SIGTERM/SIGINT를
+`SIG_DFL`로 되돌리고, `try/finally`에서 `terminate()` + `join()`을 수행한다.
+회귀 테스트: `test_reverse_lookup_parallel_returns_without_hanging`.
+
+### (2) `bootout`이 앱 스텁만 정지시키고 python 자식을 고아로 남긴다
+
+launchd의 `bootout`은 잡의 **main 프로세스(앱 스텁)** 에만 SIGTERM을 보낸다. 스텁이 죽으면
+자식 python은 PID 1에 입양되어 **계속 실행**된다. 결과적으로 `stop`이 실패하고(API가 계속 응답),
+`start`는 락 때문에 "이미 실행 중"이라며 복구를 거부했다.
+
+**수정.**
+- 런타임에 **부모 감시 스레드**를 추가했다(launchd 관리 모드 한정). `os.getppid() == 1`이 되면
+  스스로 종료한다.
+- `cmd_stop`은 bootout 뒤에도 락을 잡고 있는 프로세스를 정리한다.
+- `cmd_start`은 launchd가 언로드됐는데 락만 잡고 있는 고아를 정리하고 기동한다.
+- `packaging/stub.c`도 SIGTERM/SIGINT를 자식에게 전달하도록 고쳤다(다음 빌드부터 적용).
+  **현재 설치된 앱은 이 수정 이전 빌드**이며, 위 런타임 감시가 같은 문제를 막는다.
+  앱을 재빌드하면 cdhash가 바뀌어 부여된 권한이 무효가 되므로 지금은 재빌드하지 않았다.
+- 회귀 테스트: `test_stop_cleans_up_an_orphaned_child`, `test_start_recovers_from_an_orphaned_child`.
+
+### (3) `status`가 백엔드가 아니라 CLI 자신의 권한을 표시했다
+
+권한은 프로세스마다 다르다. 앱이 띄운 백엔드는 손쉬운 사용을 물려받았지만, `status`를 실행한
+터미널은 그렇지 않다. 그래서 백엔드가 `정상`인데 `status`는 `없음`이라고 표시했다.
+
+**수정.** 백엔드가 실행 중이면 `/v1/status`의 판정(백엔드가 스스로 잰 값)을 우선하고,
+출력에 `(권한 측정: 백엔드|터미널)`을 붙여 출처를 밝힌다.
+회귀 테스트: `test_status_prefers_the_running_backend_view`, `test_status_falls_back_to_the_terminal_view`.
+
+---
+
+## 부록 D. M9 실기 검증 (앱 + launchd)
+
+| 확인 | 결과 |
+|---|---|
+| launchd → 앱 → python 체인 | `launchd(1) → SesametokBackend.app --managed → python foreground --managed` |
+| LaunchAgent `ProgramArguments` | `['/Applications/SesametokBackend.app/Contents/MacOS/SesametokBackend', '--managed']` |
+| **앱의 손쉬운 사용이 자식에게 귀속** | 백엔드 `/v1/status` → `accessibility_trusted: true` |
+| **같은 인터프리터를 셸에서 실행** | `accessibility_trusted: false` (격리 확인) |
+| 전체 디스크 접근 | 앱에 부여하지 않았고 `false` — 그래도 `store_readable: true`(읽기 성공, ADR-017) |
+| 첫 기동 | 역추적 ≈20초 → 아카이브 생성(방 411 / 메시지 9,508) → API 응답 |
+| 메뉴바 | `메뉴바를 시작했습니다` 로그 확인 |
+| `stop` | 1초 내 API 정지 · 락 파일 제거 · 잔여 프로세스 없음 |
+| 앱 더블클릭(`open`, 인자 없음) | `start`와 동일하게 launchd로 재기동, 복구 후 `AX = true` |
+| 중복 실행 | 이미 실행 중이면 아무 일도 하지 않음(`start`의 멱등성) |
