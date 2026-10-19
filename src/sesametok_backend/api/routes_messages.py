@@ -101,4 +101,12 @@ def post_message(context: ApiContext, request: Request) -> Response:
             SEND_STATUS.get(exc.code, 502), exc.code, str(exc), retryable=exc.retryable
         ) from exc
 
+    # 워커가 실패를 값으로 돌려준 경우에도 HTTP 상태를 맞춘다.
+    if result.result in ("failed", "refused") and result.code:
+        raise ApiError(
+            SEND_STATUS.get(result.code, 502),
+            result.code,
+            result.message or "",
+            retryable=False,
+        )
     return Response.json(result.to_dict())

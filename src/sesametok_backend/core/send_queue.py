@@ -152,10 +152,23 @@ class SendQueue(threading.Thread):
                 continue
             try:
                 result = self.process(job.request)
+            except SendError as exc:
+                # 발신 실패 코드(예: room_open_failed, user_busy)는 계약이다.
+                # internal_error로 뭉개면 클라이언트가 원인을 알 수 없다.
+                logger.warning("발신 실패: %s", exc.code)
+                result = SendResult(
+                    result="failed",
+                    code=exc.code,
+                    message=str(exc),
+                    client_request_id=job.request.client_request_id,
+                )
             except Exception as exc:  # 작업 하나가 워커를 죽이게 두지 않는다
                 logger.error("발신 워커 오류: %s", type(exc).__name__)
                 result = SendResult(
-                    result="failed", code="internal_error", message=type(exc).__name__
+                    result="failed",
+                    code="internal_error",
+                    message=type(exc).__name__,
+                    client_request_id=job.request.client_request_id,
                 )
             job.future.put(result)
 

@@ -527,14 +527,23 @@ def process_alive(pid: int) -> bool:
 
 
 def terminate_process(pid: int, timeout: float = 5.0, interval: float = 0.1) -> bool:
-    """잠금을 소유한 foreground 프로세스에 SIGTERM을 보내고 종료를 기다린다.
+    """잠금을 소유한 프로세스를 SIGTERM으로 내리고, 안 되면 SIGKILL로 확정한다.
 
     ``bootout``은 launchd가 관리하는 인스턴스만 중지한다; 개발용 ``foreground``
-    실행은 대신 잠금을 쥐고 있다. 프로세스가 사라지면 ``True``를 반환한다.
+    실행은 대신 잠금을 쥐고 있다. SIGTERM만 보내면 AX 호출에 갇힌 프로세스가 영원히
+    남는다(실측). 프로세스가 사라지면 ``True``를 반환한다.
     """
 
     try:
         os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    if wait_until(lambda: not process_alive(pid), timeout, interval):
+        return True
+    try:
+        os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         return True
     except OSError:

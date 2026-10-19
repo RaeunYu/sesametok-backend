@@ -21,6 +21,7 @@ from ..config import Settings
 from ..models import Message
 from .archive import Archive
 from .events import EventBus
+from .preferences import DEFAULT_POLL_SECONDS, coerce_poll_seconds
 from .snapshot import MessageDiff, RoomDiff
 
 logger = logging.getLogger("sesametok_backend.core.poller")
@@ -87,6 +88,7 @@ class Poller(threading.Thread):
         *,
         clock: Callable[[], float] = time.time,
         monotonic: Callable[[], float] = time.monotonic,
+        interval: float | None = None,
     ) -> None:
         super().__init__(name="sesametok-poller", daemon=True)
         self.settings = settings
@@ -103,6 +105,20 @@ class Poller(threading.Thread):
         self._wake = threading.Event()
         self._paused = threading.Event()
         self._last_prune: float | None = None
+        # 폴링 주기는 실행 중에 바뀔 수 있다. ``_interval_version``은 대기 중인
+        # 루프가 "주기가 바뀌었는지"를 알아채게 하는 표식이다(잠금 없이 읽어도
+        # 되는 단조 증가 정수).
+        self._interval_lock = threading.Lock()
+        self._interval = self._initial_interval(interval)
+        self._interval_version = 0
+
+    def _initial_interval(self, interval: float | None) -> float:
+        if interval is not None:
+            resolved = coerce_poll_seconds(interval)
+            if resolved is None:
+                raise ValueError("폴링 주기는 0보다 큰 유한한 초 단위 숫자여야 합니다")
+            return resolved
+        return coerce_poll_seconds(self.settings.poll_seconds) or DEFAULT_POLL_SECONDS
 
     # ------------------------------------------------------------- 아카이브
 
@@ -132,6 +148,35 @@ class Poller(threading.Thread):
         self.trigger()
 
     @property
+    def interval(self) -> float:
+        """현재 폴링 주기(초)."""
+
+        with self._interval_lock:
+            return self._interval
+
+    def set_interval(self, seconds: float) -> float:
+        """폴링 주기를 즉시 바꾼다(어느 스레드에서든 안전).
+
+        대기 중이면 대기를 깨워 새 주기 기준으로 남은 시간을 다시 계산하므로,
+        주기를 줄이면 곧바로 다음 폴링이 일어나고 늘리면 남은 시간이 늘어난다.
+        ``trigger()``처럼 즉시 폴링을 강제하지는 않는다(주기만 바꾼다). 유효하지
+        않은 값은 :class:`ValueError`다. 적용된 주기를 반환한다.
+        """
+
+        value = coerce_poll_seconds(seconds)
+        if value is None:
+            raise ValueError("폴링 주기는 0보다 큰 유한한 초 단위 숫자여야 합니다")
+        with self._interval_lock:
+            if value == self._interval:
+                return value
+            self._interval = value
+            self._interval_version += 1
+        logger.info("폴링 주기를 %.1f초로 바꿨습니다", value)
+        # 대기 중인 루프를 깨워 새 주기로 남은 시간을 다시 계산하게 한다.
+        self._wake.set()
+        return value
+
+    @property
     def paused(self) -> bool:
         return self._paused.is_set()
 
@@ -148,7 +193,7 @@ class Poller(threading.Thread):
     def run(self) -> None:
         logger.info(
             "폴러 시작: %.1f초마다, lookback %d초",
-            self.settings.poll_seconds,
+            self.interval,
             self.settings.lookback_seconds,
         )
         backoff = 1.0
@@ -173,10 +218,32 @@ class Poller(threading.Thread):
                 self.stats.consecutive_failures = 0
                 self.stats.last_error = None
                 self._wake.clear()
-                self._wake.wait(timeout=self.settings.poll_seconds)
+                self._wait_for_next_poll()
         finally:
             self.close()
             logger.info("폴러 중지됨")
+
+    def _wait_for_next_poll(self) -> None:
+        """다음 폴링까지 기다린다. 대기 중에 주기가 바뀌면 남은 시간을 다시 계산한다.
+
+        이미 기다린 시간은 새 주기에서 뺀다. 그래서 60초에서 2초로 줄이면 대기가
+        곧바로 끝나고(남은 시간 0 이하), 2초에서 60초로 늘리면 남은 시간이 늘어난다.
+        ``trigger()``는 즉시 폴링하도록 대기를 끝내고, ``stop()``은 루프를 끝낸다.
+        """
+
+        started = self._monotonic()
+        version = self._interval_version
+        while not self._stop.is_set():
+            remaining = self.interval - (self._monotonic() - started)
+            if remaining <= 0:
+                return
+            if not self._wake.wait(remaining):
+                return  # 주기가 다 됐다
+            self._wake.clear()
+            if self._stop.is_set() or self._interval_version == version:
+                return  # 종료 요청이거나 trigger()다
+            # set_interval()이 대기를 깼다: 새 주기로 남은 시간을 다시 계산한다.
+            version = self._interval_version
 
     # -------------------------------------------------------------- 폴링 1회
 
@@ -278,7 +345,7 @@ class Poller(threading.Thread):
         return {
             "polling": not self.paused and not self.stopping,
             "paused": self.paused,
-            "poll_seconds": self.settings.poll_seconds,
+            "poll_seconds": self.interval,
             "last_success_at": self.stats.last_success_at,
             "consecutive_failures": self.stats.consecutive_failures,
             "last_error": self.stats.last_error,

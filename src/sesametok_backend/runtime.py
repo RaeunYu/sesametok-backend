@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from . import diagnostics
 from .config import Settings
+from .core import preferences
 from .core.archive import Archive
 from .core.events import EventBus
 from .core.poller import Poller, PollSource
@@ -242,7 +243,13 @@ class Runtime:
     def _start_poller(self) -> None:
         assert self.identity is not None
         source = self.source or KakaoSource(identity=self.identity, roots=store.store_roots())
-        self._poller = Poller(self.settings, self.archive_factory(), self._bus, source)
+        self._poller = Poller(
+            self.settings,
+            self.archive_factory(),
+            self._bus,
+            source,
+            interval=self.poll_interval(),
+        )
         self._poller.start()
         self.add_shutdown_hook(self._stop_poller)
 
@@ -463,6 +470,8 @@ class Runtime:
             autostart_provider=self.autostart_enabled,
             toggle_autostart=self.toggle_autostart,
             restart_provider=self.restart_enabled,
+            interval_provider=self.poll_interval,
+            set_interval=self.set_poll_interval,
         )
 
     def autostart_enabled(self) -> bool:
@@ -525,6 +534,55 @@ class Runtime:
         except Exception as exc:
             logger.warning("로그인 자동 시작 전환에 실패했습니다: %s", type(exc).__name__)
             return None
+
+    # ------------------------------------------------------- 폴링 주기(메뉴 연동)
+
+    def preferences_store(self) -> preferences.Preferences:
+        """메뉴바 선택을 기억하는 작은 JSON 저장소(``<data_dir>/preferences.json``).
+
+        주기 숫자만 담으며 대화 데이터는 절대 넣지 않는다.
+        """
+
+        return preferences.Preferences.for_data_dir(self.settings.data_dir)
+
+    def poll_interval(self) -> float:
+        """지금 적용할 폴링 주기(초).
+
+        우선순위: 저장된 선택 > ``SESAMETOK_POLL_SECONDS`` > 기본 3초. 저장값이
+        0 이하이거나 비정상이면 무시한다. 폴러가 살아 있으면 그 실제 주기를
+        돌려주므로 메뉴 체크 표시가 항상 현재 상태와 맞는다. 메뉴바가 없어도
+        (``SESAMETOK_NO_MENUBAR=1``) 이 값이 폴러에 쓰인다.
+        """
+
+        poller = self._poller
+        if poller is not None:
+            return poller.interval
+        return preferences.resolve_poll_seconds(
+            self.preferences_store().poll_seconds(),
+            self.settings.poll_seconds,
+        )
+
+    def set_poll_interval(self, seconds: float) -> bool:
+        """폴링 주기를 즉시 바꾸고 다음 실행을 위해 저장한다.
+
+        재시작이 필요 없다: 폴러의 대기 주기가 곧바로 새 값으로 다시 계산된다.
+        저장에 실패해도 이번 실행에는 계속 적용되며(로그만 남긴다), 유효하지 않은
+        값이면 아무것도 바꾸지 않고 ``False``를 반환한다.
+        """
+
+        value = preferences.coerce_poll_seconds(seconds)
+        if value is None:
+            logger.warning("폴링 주기가 유효하지 않아 바꾸지 않았습니다")
+            return False
+        poller = self._poller
+        if poller is not None:
+            try:
+                poller.set_interval(value)
+            except ValueError:
+                logger.warning("폴러가 폴링 주기를 받아들이지 않았습니다")
+                return False
+        self.preferences_store().set_poll_seconds(value)
+        return True
 
     def _menu_quit(self) -> None:
         """메뉴 "종료": launchd 관리를 해제한 뒤 중지한다.

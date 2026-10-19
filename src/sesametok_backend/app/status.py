@@ -17,6 +17,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from ..core.preferences import DEFAULT_POLL_SECONDS, coerce_poll_seconds
+
 #: 이 값 이상으로 연속 폴링 실패가 쌓이면 ``Status.error``가 된다.
 #: 1 이상 이 임계값 미만은 ``Status.degraded``다.
 FAILURE_THRESHOLD = 3
@@ -210,6 +212,9 @@ class StatusSnapshot:
     managed: bool = False
     """launchd가 이 프로세스를 관리하면 True이며, 그러면 메뉴의 재시작 항목이 활성화된다."""
 
+    poll_seconds: float = DEFAULT_POLL_SECONDS
+    """현재 폴링 주기(초)이며, "동기화 주기" 하위 메뉴의 체크 표시를 정한다."""
+
     webhooks: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
 
 
@@ -228,6 +233,7 @@ def build_snapshot(
     accessibility_trusted: bool | None = None,
     autostart: bool = False,
     managed: bool = False,
+    poll_seconds: float | None = None,
     webhooks: Iterable[Mapping[str, object]] = (),
     now: datetime | float | int | str | None = None,
     failure_threshold: int = FAILURE_THRESHOLD,
@@ -252,6 +258,7 @@ def build_snapshot(
         now=now,
         consecutive_failures=consecutive_failures,
     )
+    interval = coerce_poll_seconds(poll_seconds)
     return StatusSnapshot(
         status=state,
         summary=summary,
@@ -263,6 +270,7 @@ def build_snapshot(
         paused=paused,
         autostart=autostart,
         managed=managed,
+        poll_seconds=interval if interval is not None else DEFAULT_POLL_SECONDS,
         webhooks=tuple(webhooks),
     )
 
@@ -279,13 +287,16 @@ ACTION_OPEN_LOG = "open_log"
 ACTION_TOGGLE_AUTOSTART = "toggle_autostart"
 ACTION_QUIT = "quit"
 ACTION_RESTART = "restart"
+ACTION_SET_INTERVAL = "set_interval"
 
-#: 항목 종류: 비활성 상태 줄, 일반 동작, 체크박스, 설명용 비활성 줄, 구분선.
+#: 항목 종류: 비활성 상태 줄, 일반 동작, 체크박스, 설명용 비활성 줄, 구분선,
+#: 폴링 주기 선택지(라디오형, 현재 값에만 체크).
 KIND_STATUS = "status"
 KIND_ACTION = "action"
 KIND_CHECKBOX = "checkbox"
 KIND_INFO = "info"
 KIND_SEPARATOR = "separator"
+KIND_INTERVAL = "interval"
 
 #: 제목을 맞춰보지 않고도 테스트와 뷰가 합의할 수 있도록 안정적인 항목 id를 쓴다.
 ITEM_STATUS = "status_summary"
@@ -305,11 +316,35 @@ ITEM_INFO_UNSUPPORTED = "info_unsupported_types"
 ITEM_INFO_STORAGE = "info_storage"
 ITEM_RESTART = "restart"
 ITEM_QUIT = "quit"
+ITEM_INTERVAL = "interval"
+
+#: 하위 메뉴 "동기화 주기"의 선택지(초). 저장값이 이 밖의 값이면 어느 항목도
+#: 체크하지 않는다 — 현재 값을 다른 값으로 왜곡해서 보여주지 않는다.
+INTERVAL_CHOICES: tuple[float, ...] = (2.0, 5.0, 10.0, 30.0, 60.0)
+
+#: 주기 하위 메뉴의 제목.
+INTERVAL_MENU_TITLE = "동기화 주기"
+
+
+def interval_label(seconds: float) -> str:
+    """주기 선택지의 한국어 라벨(예: ``2초마다``)."""
+
+    return f"{seconds:g}초마다"
+
+
+def interval_item_id(seconds: float) -> str:
+    """주기 선택지의 안정적인 항목 id(예: ``interval_10``)."""
+
+    return f"{ITEM_INTERVAL}_{seconds:g}"
 
 
 @dataclass(frozen=True)
 class MenuItem:
-    """AppKit 없이도 테스트할 수 있도록 메뉴 항목 하나를 데이터로 표현한다."""
+    """AppKit 없이도 테스트할 수 있도록 메뉴 항목 하나를 데이터로 표현한다.
+
+    *value*는 항목이 표현하는 값(폴링 주기 선택지의 초)이고, *children*은 하위
+    메뉴 항목들이다. 둘 다 없으면 지금까지의 평범한 항목과 같다.
+    """
 
     item_id: str
     title: str
@@ -317,6 +352,30 @@ class MenuItem:
     action: str | None
     checked: bool | None = None
     kind: str = KIND_ACTION
+    value: float | None = None
+    children: tuple["MenuItem", ...] = ()
+
+
+def interval_menu_items(current: float | None) -> list[MenuItem]:
+    """주기 선택지 항목들. *current*와 정확히 같은 값에만 체크를 단다.
+
+    비정상이거나 선택지에 없는 *current*는 체크 없이 넘어가며, 어떤 라벨도
+    바꾸지 않는다(현재 값을 다른 값으로 왜곡해서 보여주지 않는다).
+    """
+
+    selected = coerce_poll_seconds(current)
+    return [
+        MenuItem(
+            interval_item_id(seconds),
+            interval_label(seconds),
+            True,
+            ACTION_SET_INTERVAL,
+            selected == seconds,
+            KIND_INTERVAL,
+            value=seconds,
+        )
+        for seconds in INTERVAL_CHOICES
+    ]
 
 
 def _running_label(running: bool | None) -> str:
@@ -376,6 +435,10 @@ def menu_items(
 
     재시작 항목은 launchd가 관리하는 프로세스(``snapshot.managed``)에서만 활성화되며,
     아니면 이유를 제목에 담아 비활성으로 둔다.
+
+    "동기화 주기" 하위 메뉴는 폴링 주기 선택지(2/5/10/30/60초)를 담고, 현재 값에만
+    체크 표시를 단다. 선택은 :data:`ACTION_SET_INTERVAL`로 전달되며, 선택지 값(초)은
+    항목의 :attr:`MenuItem.value`에 있다.
     """
 
     items: list[MenuItem] = [
@@ -426,6 +489,15 @@ def menu_items(
                 "재개" if snapshot.paused else "일시정지",
                 True,
                 ACTION_TOGGLE_PAUSE,
+            ),
+            MenuItem(
+                ITEM_INTERVAL,
+                INTERVAL_MENU_TITLE,
+                True,
+                None,
+                None,
+                KIND_ACTION,
+                children=tuple(interval_menu_items(snapshot.poll_seconds)),
             ),
             MenuItem(ITEM_COPY_API_TOKEN, "API 토큰 복사", True, ACTION_COPY_API_TOKEN),
             MenuItem(ITEM_OPEN_LOG, "로그 열기", True, ACTION_OPEN_LOG),

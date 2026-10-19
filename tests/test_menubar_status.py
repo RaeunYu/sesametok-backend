@@ -319,6 +319,73 @@ def test_sync_now_disabled_while_paused() -> None:
     assert _by_id(menu_items(_snapshot()), status_model.ITEM_SYNC_NOW).enabled is True
 
 
+# --------------------------------------------------------- 동기화 주기 메뉴
+
+
+def test_interval_submenu_lists_five_choices_and_checks_only_the_current_one() -> None:
+    container = _by_id(menu_items(_snapshot(poll_seconds=10.0)), status_model.ITEM_INTERVAL)
+
+    assert container.title == "동기화 주기"
+    assert container.action is None
+    assert container.kind != status_model.KIND_SEPARATOR
+    options = list(container.children)
+    assert [option.title for option in options] == [
+        "2초마다",
+        "5초마다",
+        "10초마다",
+        "30초마다",
+        "60초마다",
+    ]
+    assert [option.item_id for option in options] == [
+        "interval_2",
+        "interval_5",
+        "interval_10",
+        "interval_30",
+        "interval_60",
+    ]
+    assert [option.checked for option in options] == [False, False, True, False, False]
+
+    for option, seconds in zip(options, (2.0, 5.0, 10.0, 30.0, 60.0)):
+        assert option.enabled is True
+        assert option.action == status_model.ACTION_SET_INTERVAL
+        assert option.kind == status_model.KIND_INTERVAL
+        assert option.value == seconds
+        assert status_model.interval_label(seconds) == option.title
+
+
+def test_interval_check_follows_the_snapshot_interval() -> None:
+    for seconds in status_model.INTERVAL_CHOICES:
+        options = _by_id(
+            menu_items(_snapshot(poll_seconds=seconds)), status_model.ITEM_INTERVAL
+        ).children
+        checked = [option.value for option in options if option.checked]
+        assert checked == [seconds]
+
+
+def test_interval_submenu_checks_nothing_for_an_unlisted_interval() -> None:
+    # 설정/Settings 기본값은 3초이고 선택지에 없다: 값을 왜곡해 체크하지 않는다.
+    assert _snapshot().poll_seconds == 3.0
+    options = _by_id(menu_items(_snapshot()), status_model.ITEM_INTERVAL).children
+    assert [option.checked for option in options] == [False] * 5
+
+
+def test_interval_choices_are_not_the_autostart_checkbox() -> None:
+    """기존 계약: ``KIND_CHECKBOX``는 로그인 자동시작 하나뿐이다."""
+
+    items = menu_items(_snapshot(poll_seconds=30.0))
+    checkboxes = [item for item in items if item.kind == status_model.KIND_CHECKBOX]
+    assert [item.item_id for item in checkboxes] == [ITEM_AUTOSTART]
+    options = _by_id(items, status_model.ITEM_INTERVAL).children
+    assert all(option.kind == status_model.KIND_INTERVAL for option in options)
+    # 선택지는 개인 데이터를 담지 않는다(초 숫자와 고정 라벨뿐이다).
+    assert all(option.title.endswith("초마다") for option in options)
+
+
+def test_invalid_snapshot_interval_falls_back_to_the_default() -> None:
+    for bad in (0, -5, None, float("nan"), float("inf")):
+        assert _snapshot(poll_seconds=bad).poll_seconds == 3.0
+
+
 # ------------------------------------------------------------- 임포트 가드
 
 _STATUS_IMPORT_PROBE = f"""

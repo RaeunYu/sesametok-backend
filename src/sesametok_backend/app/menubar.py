@@ -122,12 +122,14 @@ class RuntimeStatusProvider:
         archive_interval: float = 30.0,
         autostart_provider: Callable[[], bool] | None = None,
         restart_provider: Callable[[], bool] | None = None,
+        interval_provider: Callable[[], float] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._runtime = runtime
         self._archive_interval = archive_interval
         self._autostart_provider = autostart_provider
         self._restart_provider = restart_provider
+        self._interval_provider = interval_provider
         self._clock = clock
         self._rooms: int | None = None
         self._webhooks: tuple[Mapping[str, object], ...] = ()
@@ -139,6 +141,7 @@ class RuntimeStatusProvider:
         stats = poller.stats if poller is not None else None
         rooms, webhooks = self._archive_state()
         report = self._runtime.diagnostic_report
+        interval = self._interval_provider() if self._interval_provider is not None else None
         return status_model.build_snapshot(
             kakaotalk_running=health.get("kakaotalk_running"),
             permissions_ok=bool(health.get("permissions_ok")),
@@ -157,6 +160,7 @@ class RuntimeStatusProvider:
             accessibility_trusted=report.get("accessibility_trusted"),
             autostart=bool(self._autostart_provider()) if self._autostart_provider else False,
             managed=bool(self._restart_provider()) if self._restart_provider else False,
+            poll_seconds=interval,
             webhooks=webhooks,
         )
 
@@ -200,6 +204,7 @@ class MenuBarController(Foundation.NSObject):
         self._actions: dict[str, Callable[[], None]] = {}
         self._quit_callback: Callable[[], None] = _default_quit
         self._restart_callback: Callable[[], None] | None = None
+        self._interval_callback: Callable[[float], None] | None = None
         self._executable_path = ""
         self._log_path = ""
         return self
@@ -216,6 +221,7 @@ class MenuBarController(Foundation.NSObject):
         copy_api_token: Callable[[], str | None] | None = None,
         open_log: Callable[[], None] | None = None,
         toggle_autostart: Callable[[], bool | None] | None = None,
+        set_interval: Callable[[float], None] | None = None,
         quit: Callable[[], None] | None = None,
         restart: Callable[[], None] | None = None,
         open_kakaotalk: Callable[[], None] | None = None,
@@ -228,7 +234,8 @@ class MenuBarController(Foundation.NSObject):
         로그인 자동시작 콜백은 :func:`_autostart_unavailable`로 기본 설정되어,
         launcher 마일스톤이 실제 콜백을 주입하기 전까지 이 모듈이 ``launcher.py``와
         독립적으로 유지된다. *restart*는 launchd 관리 하에서만 의미가 있으며, 활성
-        여부는 :attr:`StatusSnapshot.managed`가 결정한다.
+        여부는 :attr:`StatusSnapshot.managed`가 결정한다. *set_interval*은 "동기화
+        주기" 하위 메뉴에서 고른 초를 받아 즉시 적용한다.
         """
 
         self._status_provider = status_provider
@@ -242,6 +249,7 @@ class MenuBarController(Foundation.NSObject):
 
         self._quit_callback = quit or _default_quit
         self._restart_callback = restart
+        self._interval_callback = set_interval
         self._actions = {
             status_model.ACTION_SYNC_NOW: lambda: _refresh_after(sync_now),
             status_model.ACTION_TOGGLE_PAUSE: lambda: _refresh_after(toggle_pause),
@@ -403,12 +411,15 @@ class MenuBarController(Foundation.NSObject):
             item.title, None, ""
         )
         nsitem.setEnabled_(item.enabled)
-        if item.kind == status_model.KIND_CHECKBOX:
+        if item.kind in (status_model.KIND_CHECKBOX, status_model.KIND_INTERVAL):
             nsitem.setState_(
                 AppKit.NSControlStateValueOn
                 if item.checked
                 else AppKit.NSControlStateValueOff
             )
+        if item.value is not None:
+            # 폴링 주기 선택지의 초 값은 태그로 전달한다(문자열 id는 action id 그대로).
+            nsitem.setTag_(int(round(item.value)))
         if item.action is not None:
             nsitem.setTarget_(self)
             nsitem.setAction_(_SELECTOR_PERFORM)
@@ -416,12 +427,22 @@ class MenuBarController(Foundation.NSObject):
             if item.action == status_model.ACTION_QUIT:
                 nsitem.setKeyEquivalent_("q")
                 nsitem.setKeyEquivalentModifierMask_(AppKit.NSEventModifierFlagCommand)
+        if item.children:
+            submenu = AppKit.NSMenu.alloc().init()
+            submenu.setAutoenablesItems_(False)
+            for child in item.children:
+                submenu.addItem_(self._nsitem(child))
+            nsitem.setSubmenu_(submenu)
         return nsitem
 
     def performAction_(self, sender: Any) -> None:
         """단일 AppKit 액션. 항목이 표현하는 action id로 분기한다."""
 
         action = sender.representedObject()
+        if action == status_model.ACTION_SET_INTERVAL:
+            # 주기 선택은 "어떤 값"이 필요하므로 태그를 읽는 별도 경로를 쓴다.
+            self._set_interval_action(sender)
+            return
         handler = self._actions.get(action)
         if handler is None:
             logger.warning("메뉴 액션 %r에 대한 핸들러가 없습니다", action)
@@ -430,6 +451,32 @@ class MenuBarController(Foundation.NSObject):
             handler()
         except Exception:
             logger.exception("메뉴 액션 %r이(가) 실패했습니다", action)
+
+    @objc.python_method
+    def _set_interval_action(self, sender: Any) -> None:
+        """하위 메뉴에서 고른 폴링 주기를 즉시 적용한다.
+
+        AppKit 액션이므로 메인 스레드에서 호출된다. 콜백은 폴러를 깨우고 저장소에
+        기록하며, 저장 실패는 콜백 안에서 로그만 남긴다. 적용 뒤 메뉴를 다시 그려
+        체크 표시를 옮긴다.
+        """
+
+        try:
+            seconds = float(sender.tag())
+        except (TypeError, ValueError):
+            seconds = 0.0
+        if seconds <= 0:
+            logger.warning("동기화 주기 값이 비정상이라 무시했습니다")
+            return
+        if self._interval_callback is None:
+            logger.warning("동기화 주기를 바꿀 콜백이 없습니다")
+            return
+        try:
+            self._interval_callback(seconds)
+        except Exception:
+            logger.exception("동기화 주기를 바꾸지 못했습니다")
+        finally:
+            self.refresh()
 
     @objc.python_method
     def _copy_token(self, supplier: Callable[[], str | None] | None) -> None:
@@ -529,6 +576,8 @@ def run_menubar(
     autostart_provider: Callable[[], bool] | None = None,
     toggle_autostart: Callable[[], bool | None] | None = None,
     restart_provider: Callable[[], bool] | None = None,
+    interval_provider: Callable[[], float] | None = None,
+    set_interval: Callable[[float], None] | None = None,
 ) -> int:
     """*runtime*에서 메뉴바를 만들고 AppKit 이벤트 루프를 실행한다.
 
@@ -538,7 +587,8 @@ def run_menubar(
     프로세스를 재시작한다. *autostart_provider*는 로그인 자동시작 체크박스를 채우고,
     *toggle_autostart*는 그 값을 바꾼다. *restart_provider*는 재시작 항목의 활성
     여부(launchd 관리 여부)를 알려 주어, 비활성일 때 메뉴가 이유를 표시할 수 있게
-    한다. 메인 스레드에서 호출해야 한다.
+    한다. *interval_provider*는 "동기화 주기" 하위 메뉴의 체크 표시를 정하고,
+    *set_interval*은 고른 초를 즉시 적용한다. 메인 스레드에서 호출해야 한다.
     """
 
     provider = RuntimeStatusProvider(
@@ -546,6 +596,7 @@ def run_menubar(
         archive_interval=archive_interval,
         autostart_provider=autostart_provider,
         restart_provider=restart_provider,
+        interval_provider=interval_provider,
     )
     controller = MenuBarController.alloc().init()
     controller.configure(
@@ -553,6 +604,7 @@ def run_menubar(
         sync_now=lambda: _trigger_sync(runtime),
         toggle_pause=lambda: _toggle_pause(runtime),
         toggle_autostart=toggle_autostart,
+        set_interval=set_interval,
         copy_api_token=lambda: runtime.api_token,
         open_log=lambda: open_path(str(runtime.settings.backend_log_path)),
         quit=quit_callback,
