@@ -207,6 +207,9 @@ class MenuBarController(Foundation.NSObject):
         self._interval_callback: Callable[[float], None] | None = None
         self._executable_path = ""
         self._log_path = ""
+        self._menu_open = False
+        self._pending_snapshot: StatusSnapshot | None = None
+        self._last_signature: tuple | None = None
         return self
 
     # -------------------------------------------------------------- 연결
@@ -317,6 +320,7 @@ class MenuBarController(Foundation.NSObject):
         self._status_item = bar.statusItemWithLength_(AppKit.NSVariableStatusItemLength)
         self._menu = AppKit.NSMenu.alloc().init()
         self._menu.setAutoenablesItems_(False)
+        self._menu.setDelegate_(self)
         self._status_item.setMenu_(self._menu)
         self._installed = True
 
@@ -372,6 +376,41 @@ class MenuBarController(Foundation.NSObject):
     def _apply(self, snapshot: StatusSnapshot) -> None:
         self._snapshot = snapshot
         self._update_button(snapshot)
+        if self._menu_open:
+            # 열려 있는 메뉴를 다시 그리면 펼쳐 둔 하위 메뉴가 접히고 다시 나타난다.
+            # 닫힌 뒤에 한 번만 반영한다.
+            self._pending_snapshot = snapshot
+            return
+        signature = status_model.menu_signature(
+            snapshot, executable_path=self._executable_path
+        )
+        if signature == self._last_signature:
+            return
+        self._last_signature = signature
+        self._rebuild_menu(snapshot)
+
+    def menuWillOpen_(self, menu: Any) -> None:
+        """메뉴가 열린 동안에는 다시 그리지 않는다(하위 메뉴가 접히는 것을 막는다)."""
+
+        self._menu_open = True
+
+    def menuDidClose_(self, menu: Any) -> None:
+        self._menu_open = False
+        # 닫히는 도중에 항목을 갈아 끼우지 않도록 다음 런루프로 미룬다.
+        AppHelper.callAfter(self._flush_pending, None)
+
+    @objc.python_method
+    def _flush_pending(self, *_args: Any) -> None:
+        pending, self._pending_snapshot = self._pending_snapshot, None
+        snapshot = pending or self._snapshot
+        if snapshot is None:
+            return
+        signature = status_model.menu_signature(
+            snapshot, executable_path=self._executable_path
+        )
+        if signature == self._last_signature and pending is None:
+            return
+        self._last_signature = signature
         self._rebuild_menu(snapshot)
 
     @objc.python_method

@@ -468,3 +468,39 @@ def test_run_foreground_without_menubar_uses_the_plain_wait_loop(env: Path) -> N
 
     assert runtime.run_foreground(install_signal_handlers=False) == 0
     assert not settings.lock_path.exists()
+
+
+# --------------------------------------------------- 메뉴 재생성 억제(지문)
+
+
+def test_menu_signature_is_stable_for_the_same_view() -> None:
+    """같은 표시면 지문이 같아야 한다 — 같으면 메뉴를 다시 그리지 않는다."""
+
+    snapshot = _snapshot(accessibility_trusted=False, room_count=3)
+    assert status_model.menu_signature(snapshot) == status_model.menu_signature(snapshot)
+
+
+def test_menu_signature_changes_when_a_shown_value_changes() -> None:
+    """화면에 보이는 값(체크 위치·요약)이 바뀌면 지문도 바뀌어야 한다."""
+
+    base = _snapshot(accessibility_trusted=False, room_count=3, poll_seconds=5.0)
+    other_interval = _snapshot(
+        accessibility_trusted=False, room_count=3, poll_seconds=30.0
+    )
+    other_summary = _snapshot(accessibility_trusted=False, room_count=4, poll_seconds=5.0)
+
+    signature = status_model.menu_signature(base)
+    assert status_model.menu_signature(other_interval) != signature
+    assert status_model.menu_signature(other_summary) != signature
+
+
+def test_menu_signature_ignores_values_not_drawn_in_the_menu() -> None:
+    """메뉴에 그리지 않는 값만 바뀌면 다시 그리지 않는다.
+
+    선택지에 없는 주기(3초, 4초)는 어느 항목에도 체크를 만들지 않으므로 표시가 같다.
+    """
+
+    base = _snapshot(accessibility_trusted=False, room_count=3, poll_seconds=3.0)
+    assert status_model.menu_signature(
+        _snapshot(accessibility_trusted=False, room_count=3, poll_seconds=4.0)
+    ) == status_model.menu_signature(base)

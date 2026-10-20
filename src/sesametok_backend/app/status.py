@@ -416,6 +416,25 @@ def _webhook_summary(
     )
 
 
+def menu_signature(
+    snapshot: StatusSnapshot, *, executable_path: str = ""
+) -> tuple[tuple[str, str, bool, bool], ...]:
+    """메뉴를 다시 그려야 하는지 판단하는 지문.
+
+    제목·활성 여부·체크를 **하위 메뉴까지** 모은다. 이 값이 같으면 메뉴를 다시 그리지
+    않으므로, 사용자가 하위 메뉴를 펼쳐 둔 상태에서 폴링이 갱신되어도 항목이
+    재생성되지 않는다.
+    """
+
+    def flatten(items: Any, prefix: str = "") -> Any:
+        for item in items:
+            yield (prefix + item.item_id, item.title, item.enabled, bool(item.checked))
+            if item.children:
+                yield from flatten(item.children, prefix + item.item_id + "/")
+
+    return tuple(flatten(menu_items(snapshot, executable_path=executable_path)))
+
+
 def menu_items(
     snapshot: StatusSnapshot,
     *,
