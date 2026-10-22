@@ -485,3 +485,11 @@ def test_webhook_rejects_unknown_kinds(api) -> None:
     )
     assert status == 400
     assert "알 수 없는 이벤트 종류" in payload["error"]["message"]
+
+
+def test_closed_room_maps_to_502() -> None:
+    """창이 열려 있지 않으면 502와 명시적 코드를 돌려준다."""
+
+    from sesametok_backend.api.routes_messages import SEND_STATUS
+
+    assert SEND_STATUS["window_not_open"] == 502

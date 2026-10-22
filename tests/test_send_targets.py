@@ -151,8 +151,10 @@ def test_untypable_target_name_is_rejected() -> None:
 
 
 def test_error_messages_carry_the_details() -> None:
-    message = format_message("window_not_open", room="Team", open="A, B")
-    assert "Team" in message and "A, B" in message
+    message = format_message("window_not_open", room="Team")
+    assert "Team" in message and "열려" in message
+    # 열려 있는 다른 방 이름은 메시지에 넣지 않는다(개인정보).
+    assert "A, B" not in message
 
     busy = format_message("user_busy", n=7)
     assert "7초" in busy

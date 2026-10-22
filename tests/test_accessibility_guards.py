@@ -112,7 +112,9 @@ def test_idle_gap_can_be_skipped(monkeypatch) -> None:
     driver._wait_for_idle(immediate=True)  # 예외가 나면 안 된다
 
 
-def test_background_only_refuses_to_open_a_closed_room(monkeypatch) -> None:
+def test_closed_room_is_refused_without_opening_it(monkeypatch) -> None:
+    """창이 없으면 열려고 시도하지 않고 즉시 거부한다(여는 것은 사용자의 몫)."""
+
     driver = _driver(monkeypatch, FakeFramework(trusted=True))
     driver.background_only = True
 
@@ -120,6 +122,22 @@ def test_background_only_refuses_to_open_a_closed_room(monkeypatch) -> None:
         driver.find_window(TARGET)
 
     assert excinfo.value.code == "window_not_open"
+
+
+def test_the_driver_has_no_way_to_open_a_room(monkeypatch) -> None:
+    """채팅 목록·검색을 건드리는 경로가 남아 있지 않아야 한다(회귀 방지)."""
+
+    driver = _driver(monkeypatch, FakeFramework(trusted=True))
+    for name in (
+        "_open_room",
+        "_open_via_search",
+        "_open_via_chat_list",
+        "_open_by_clicking_row",
+        "_rows",
+        "_search_field",
+        "_named_rows",
+    ):
+        assert not hasattr(driver, name), name
 
 
 def test_ambiguous_windows_are_refused(monkeypatch) -> None:

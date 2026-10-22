@@ -22,6 +22,7 @@ SEND_STATUS: dict[str, int] = {
     "ambiguous_room": 409,
     "unconfirmed": 409,
     "rate_limited": 429,
+    "window_not_open": 502,
     "not_running": 503,
     "accessibility_denied": 503,
 }

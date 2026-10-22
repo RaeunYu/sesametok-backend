@@ -24,7 +24,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from .errors import SendError
-from .targets import SendTarget, room_matches, search_query, validate_room_name
+from .targets import SendTarget, room_matches, validate_room_name
 
 logger = logging.getLogger("sesametok_backend.send.accessibility")
 
@@ -37,9 +37,6 @@ FRONTMOST_CHECKS = 25
 FRONTMOST_INTERVAL = 0.04
 FRONTMOST_RETRIES = 3
 FRONTMOST_RETRY_DELAY = 0.06
-WINDOW_APPEAR_WAIT = (20, 0.10)
-OPEN_ATTEMPTS = 6
-RECENT_ROWS = 60
 MAIN_WINDOW_SAMPLE = 10
 COMPOSE_DRAIN = (20, 0.05)
 CONTENT_CONFIRM_WAIT = (30, 0.05)
@@ -285,10 +282,6 @@ class KakaoTalkDriver:
         self._pid: int | None = None
         self._deadline: _Deadline | None = None
 
-    def _check_deadline(self, code: str, **details: object) -> None:
-        if self._deadline is not None and self._deadline.expired():
-            raise SendError(code, **details)
-
     # ------------------------------------------------------------- 사전 조건
 
     def _require_permission(self) -> None:
@@ -332,7 +325,12 @@ class KakaoTalkDriver:
         return [window for window in self._windows(app) if room_matches(window.title, wanted)]
 
     def find_window(self, target: SendTarget):
-        """*target*에 대해 창을 정확히 하나로 확정하거나 거부한다(추측하지 않는다)."""
+        """*target*에 대한 창을 정확히 하나로 확정하거나 거부한다(추측하지 않는다).
+
+        발신은 **이미 열려 있는 창**에만 한다. 창을 여는 것은 사용자의 몫이며, 이
+        프로젝트는 채팅 목록·검색 상자를 건드리지 않는다. 창이 없으면
+        ``window_not_open``으로 즉시 실패한다.
+        """
 
         validate_room_name(target.room_name)
         app = self._app_element()
@@ -343,124 +341,8 @@ class KakaoTalkDriver:
         if len(matches) == 1:
             return matches[0].element
 
-        if self.background_only:
-            raise SendError(
-                "window_not_open",
-                room=target.room_name,
-                open=", ".join(window.title for window in self._windows(app)) or "(none)",
-            )
-        return self._open_room(app, target)
-
-    def _named_rows(self, app, target: SendTarget) -> list[Any]:
-        rows = self._rows(app)
-        named: list[Any] = []
-        for row in rows:
-            title = self._row_title(row)
-            if title and room_matches(title, target.room_name):
-                named.append(row)
-        logger.info("행 검색: rows=%d, matches=%d", len(rows), len(named))
-        if len(named) > 1:
-            raise SendError("ambiguous_room", room=target.room_name, count=len(named))
-        return named
-
-    def _open_by_clicking_row(self, app, target: SendTarget, *, to_pid: bool) -> bool:
-        """채팅 목록의 행을 더블클릭해 방을 연다.
-
-        ``to_pid=True``면 카카오톡에 직접 전달하므로 **활성화 없이** 열 수 있다.
-        전역 클릭은 최전면 창에 떨어지므로 그 경로에서만 활성화한다.
-        """
-
-        named = self._named_rows(app, target)
-        if not named:
-            return False
-        if not to_pid:
-            self._activate(app)
-            # 활성화하면 창이 움직일 수 있으므로 좌표를 그 뒤에 다시 읽는다.
-            center = _element_center(self.framework, named[0])
-        else:
-            center = _element_center(self.framework, named[0])
-        logger.info(
-            "방 열기(클릭): to_pid=%s, 좌표=%s", to_pid, "ok" if center else "판독 실패"
-        )
-        if center is None:
-            raise SendError("room_open_failed", room=target.room_name)
-        self._double_click(*center, to_pid=to_pid)
-        return True
-
-    def _try_window(self, app, target: SendTarget, *, attempts: int, interval: float):
-        """창이 나타나면 반환하고, 아니면 ``None``(예외를 던지지 않는다)."""
-
-        for _ in range(attempts):
-            matches = self._matching_windows(app, target.room_name)
-            if len(matches) > 1:
-                raise SendError("ambiguous_room", room=target.room_name, count=len(matches))
-            if matches:
-                return matches[0].element
-            _sleep(interval)
-        return None
-
-    def _open_room(self, app, target: SendTarget):
-        """방을 연다. **찾은 좌표를 재사용**해 두 클릭 방식을 연속 시도한다.
-
-        목록은 메시지가 오면 즉시 재정렬되므로, 클릭 사이에 다시 찾으면 대상 행을
-        놓치기 쉽다(실측: 두 번째 검색이 0건).
-        """
-
-        open_titles = ", ".join(w.title for w in self._windows(app))
-        named = self._named_rows(app, target)
-        center = _element_center(self.framework, named[0]) if named else None
-
-        if center is not None:
-            # 1) pid로만 클릭 — 앱을 앞으로 가져오지 않는다.
-            self._double_click(*center, to_pid=True)
-            window = self._try_window(app, target, attempts=20, interval=0.15)
-            if window is not None:
-                return window
-            # 2) 활성화한 뒤 전역 더블클릭(행은 전역 클릭에만 반응한다).
-            try:
-                self._activate(app)
-            except SendError as exc:
-                logger.info("활성화 실패: %s", exc.code)
-            moved = _element_center(self.framework, named[0]) or center
-            self._double_click(*moved, to_pid=False)
-            window = self._try_window(app, target, attempts=40, interval=0.15)
-            if window is not None:
-                return window
-            logger.info("클릭으로 열지 못함: 창 수=%d", len(self._windows(app)))
-
-        # 3) 폴백: 검색 → 목록
-        last_error: SendError | None = None
-        for attempt in range(OPEN_ATTEMPTS):
-            self._check_deadline("room_open_failed", room=target.room_name, open=open_titles)
-            try:
-                if self._open_via_search(app, target):
-                    return self._wait_for_single_window(app, target)
-                if self._open_via_chat_list(app, target, recent_only=True):
-                    return self._wait_for_single_window(app, target)
-            except SendError as exc:
-                logger.info("방 열기 폴백 %d 실패: %s", attempt, exc.code)
-                if exc.code in ("ambiguous_room", "room_name_not_typable", "chat_list_moved"):
-                    raise
-                last_error = exc
-            _sleep(0.1)
-
-        if last_error is not None:
-            raise last_error
-        raise SendError("room_open_failed", room=target.room_name, open=open_titles)
-
-    def _wait_for_single_window(self, app, target: SendTarget):
-        def single():
-            self._check_deadline("room_open_failed", room=target.room_name)
-            matches = self._matching_windows(app, target.room_name)
-            if len(matches) > 1:
-                raise SendError("ambiguous_room", room=target.room_name, count=len(matches))
-            return matches[0].element if matches else None
-
-        window = _wait_for(single, *WINDOW_APPEAR_WAIT)
-        if window is None:
-            logger.info("창 대기 실패: 창 수=%d", len(self._windows(app)))
-            raise SendError("room_open_failed", room=target.room_name)
-        return window
+        # 창을 여는 것은 사용자의 몫이다. 없으면 열려고 시도하지 않고 즉시 거부한다.
+        raise SendError("window_not_open", room=target.room_name)
 
     def _descendants(self, root, *, max_depth: int = 10, limit: int = MAX_DESCENDANTS) -> list[Any]:
         """깊이와 개수를 제한한 BFS.
@@ -482,103 +364,6 @@ class KakaoTalkDriver:
                 found.append(child)
                 stack.append((child, depth + 1))
         return found
-
-    def _search_field(self, app):
-        root = self._main_window_element(app) or app
-        for element in self._descendants(root, max_depth=12, limit=1500):
-            role = _text_attr(self.framework, element, "AXRole") or ""
-            if role != "AXTextField":
-                continue
-            description = (
-                _text_attr(self.framework, element, "AXPlaceholderValue")
-                or _text_attr(self.framework, element, "AXDescription")
-                or ""
-            ).lower()
-            if "search" in description or "검색" in description or description == "":
-                return element
-        return None
-
-    def _open_via_search(self, app, target: SendTarget) -> bool:
-        field = self._search_field(app)
-        if field is None:
-            raise SendError("search_unavailable")
-        self._set_focus(field)
-        query = search_query(target.room_name)
-        self._type_text(query)
-        _sleep(0.3)
-
-        rows = self._rows(app)
-        named = [row for row in rows if self._row_title(row) and room_matches(self._row_title(row), target.room_name)]
-        if not named:
-            return False
-        if len(named) > 1 and len({self._row_title(row) for row in named}) > 1:
-            raise SendError("ambiguous_room", room=target.room_name, count=len(named))
-        self._press(named[0])
-        return True
-
-    def _open_via_chat_list(self, app, target: SendTarget, *, recent_only: bool) -> bool:
-        """목록에서 이름으로 행을 찾아 **더블클릭**한다.
-
-        행은 ``AXPress``에 반응하지 않으므로 좌표 클릭이 필요하다. 위치(index)로
-        재확인하면 다른 창의 행이 섞여 순서가 흔들리므로, 클릭 직전에 **이름으로**
-        다시 찾는다.
-        """
-
-        named = self._named_rows(app, target)
-        if not named:
-            return False
-        self._activate(app)
-        current = self._named_rows(app, target)
-        if not current:
-            raise SendError("chat_list_moved", room=target.room_name)
-        center = _element_center(self.framework, current[0])
-        if center is None:
-            raise SendError("room_open_failed", room=target.room_name)
-        self._double_click(*center, to_pid=False)
-        return True
-
-    def _main_window_element(self, app):
-        """가장 큰 창을 메인 창으로 본다(채팅 목록이 있는 창)."""
-
-        best = None
-        best_area = -1.0
-        for window in self._windows(app):
-            frame = _frame_of(self.framework, window.element)
-            if frame is None:
-                if best is None:
-                    best = window.element
-                continue
-            area = abs(frame[2] * frame[3])
-            if area > best_area:
-                best, best_area = window.element, area
-        return best
-
-    def _rows(self, app) -> list[Any]:
-        """메인 창 안의 목록 행들.
-
-        앱 전체를 훑으면 창이 바뀔 때 순회 예산이 밀려 목록을 놓친다(실측).
-        """
-
-        root = self._main_window_element(app) or app
-        rows: list[Any] = []
-        for element in self._descendants(root, max_depth=12, limit=1500):
-            role = _text_attr(self.framework, element, "AXRole") or ""
-            if role in ("AXRow", "AXOutlineRow"):
-                rows.append(element)
-        return rows
-
-    def _row_title(self, row) -> str | None:
-        """행 하나의 제목. 행마다 트리 전체를 훑지 않도록 얕게 본다."""
-
-        for element in [row, *self._descendants(row, max_depth=ROW_TITLE_DEPTH, limit=ROW_TITLE_LIMIT)]:
-            role = _text_attr(self.framework, element, "AXRole") or ""
-            if role in ("AXStaticText", "AXCell", "AXTextField"):
-                value = _text_attr(self.framework, element, "AXValue") or _text_attr(
-                    self.framework, element, "AXTitle"
-                )
-                if value:
-                    return value
-        return None
 
     # ---------------------------------------------------------------- 요소
 
@@ -637,24 +422,6 @@ class KakaoTalkDriver:
         if self._pid is None:
             raise SendError("kakaotalk_not_running")
         return self._pid
-
-    def _double_click(self, x: float, y: float, *, to_pid: bool) -> None:
-        """더블클릭을 보낸다.
-
-        ``to_pid=True``면 카카오톡에 **직접** 전달되므로 앱을 앞으로 가져오지 않아도
-        된다(전역 포스트는 최전면 창에 떨어지므로 활성화가 필요하다).
-        """
-
-        pid = self._require_pid() if to_pid else None
-        for click in (1, 2):
-            for kind in (self.framework.LeftDown, self.framework.LeftUp):
-                event = self.framework.MouseEvent(None, kind, (x, y), self.framework.LeftButton)
-                self.framework.SetIntField(event, self.framework.ClickState, click)
-                if pid is None:
-                    self.framework.KeyPost(self.framework.HIDTap, event)
-                else:
-                    self.framework.KeyPostToPid(pid, event)
-            _sleep(0.04)
 
     def _post_key_to_pid(self, keycode: int, *, flags: int = 0) -> None:
         """키 이벤트를 카카오톡에만 전달한다(포커스·활성화 없음)."""
@@ -798,11 +565,9 @@ class KakaoTalkDriver:
                 str(SendError("background_send_not_accepted")),
             )
 
-        # 먼저 포커스를 뺏지 않는 경로를 시도한다(전송 버튼 AXPress / pid Enter).
+        # 포커스를 뺏지 않는 경로로만 보낸다(전송 버튼 AXPress / pid Enter).
+        # 실패하면 unconfirmed — 카카오톡을 앞으로 가져오는 폴백은 두지 않는다.
         if self._send_without_focus(window, compose, text):
-            return SendOutcome("sent")
-        # 마지막 수단: 잠깐 최전면으로 올려 전역 Enter/클릭(커튼 포함).
-        if self._send_visible(self._app_element(), window, compose, text):
             return SendOutcome("sent")
         return SendOutcome("unconfirmed", "not_sent", str(SendError("not_sent")))
 
@@ -831,42 +596,6 @@ class KakaoTalkDriver:
 
     def _compose_emptied(self, compose) -> bool:
         return _wait_for(lambda: self._value(compose) == "", *COMPOSE_DRAIN) is not None
-
-    def _send_visible(self, app, window, compose, text: str) -> bool:
-        """14~17단계: 입력이 멈추기를 기다린 뒤 화면을 가져가고 Enter / 전송 클릭.
-
-        입력 커튼을 사용할 수 있으면 먼저 올린다. 커튼을 표시할 수 없으면
-        **차단 없이** 계속 진행하되(문서화된 폴백) 모든 최전면 검사는 그대로
-        유지한다. 보이지 않게 차단하는 것은 결코 허용되지 않는다.
-        """
-
-        shown = self._raise_curtain()
-        try:
-            self._wait_for_idle()
-            if self._curtain_cancelled():
-                raise SendError("cancelled")
-            self._activate(app)          # 14단계
-            self._raise(window)          # 15단계
-            _sleep(RAISE_DELAY)
-            self._set_focus(compose)
-            if self._value(compose) != text:
-                raise SendError("value_mismatch", what="입력 상자")
-
-            self._post_key(KEY_ENTER)    # 16단계
-            if self._compose_emptied(compose):
-                return True
-
-            button = self._find_button(window, SEND_BUTTON_TITLES)
-            if button is not None:       # 17단계
-                center = _element_center(self.framework, button)
-                if center is not None:
-                    self._click(*center)
-                    if self._compose_emptied(compose):
-                        return True
-            return False
-        finally:
-            if shown:
-                self.curtain.hide()
 
     def _raise_curtain(self) -> bool:
         if self.curtain is None:
