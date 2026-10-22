@@ -189,14 +189,14 @@ class SendQueue(threading.Thread):
 
     def _validate_request(self, request: SendRequest) -> None:
         if request.mode not in VALID_MODES:
-            raise SendError("bad_mode", f"mode는 {', '.join(VALID_MODES)} 중 하나여야 한다")
+            raise SendError("bad_mode", f"mode는 {', '.join(VALID_MODES)} 중 하나여야 합니다.")
         if not request.chat_id:
-            raise SendError("bad_request", "chat_id는 필수다")
+            raise SendError("bad_request", "chat_id는 필수입니다.")
         has_text = bool(request.text)
         if request.mode == "send" and not has_text:
-            raise SendError("bad_request", "text가 필요하다")
+            raise SendError("bad_request", "text가 필요합니다.")
         if has_text and request.text and len(request.text) > 20_000:
-            raise SendError("bad_request", "텍스트가 너무 길다")
+            raise SendError("bad_request", "텍스트가 너무 깁니다.")
 
     def _check_rate_limit(self, request: SendRequest) -> None:
         if request.mode == "dry_run":
@@ -211,9 +211,9 @@ class SendQueue(threading.Thread):
             room_bucket.popleft()
 
         if len(self._recent) >= self.settings.max_sends_per_minute:
-            raise SendError("rate_limited", "전역 발신 레이트 리밋에 도달했다")
+            raise SendError("rate_limited", "전역 발신 횟수 제한에 도달했습니다. 설정값에서 한도를 변경해주세요.")
         if len(room_bucket) >= self.settings.max_sends_per_room_per_minute:
-            raise SendError("rate_limited", "방별 발신 레이트 리밋에 도달했다")
+            raise SendError("rate_limited", "방별 발신 횟수 제한에 도달했습니다. 설정값에서 한도를 변경해주세요.")
 
     def _record_rate(self, request: SendRequest) -> None:
         if request.mode == "dry_run":
@@ -232,8 +232,7 @@ class SendQueue(threading.Thread):
             return None
         stored = record["result"]
         if stored not in TERMINAL_RESULTS:
-            # 이전 시도가 결과를 보고하지 않았다. 재시도하면 중복 발신이 될 수
-            # 있으므로 추측하지 않고 그대로 알린다.
+            # 이전 시도가 결과를 보고하지 않았다. 재시도하면 중복 발신이 될 수 있으므로 추측하지 않고 그대로 알린다.
             raise SendError("unconfirmed")
         return SendResult(
             result=stored,
@@ -241,7 +240,7 @@ class SendQueue(threading.Thread):
             chars=0,
             client_request_id=record["client_request_id"],
             code="duplicate_request",
-            message="이 client_request_id는 이미 처리되었으므로 저장된 결과를 반환한다",
+            message="이 client_request_id는 이미 처리되었으므로 저장된 결과를 반환합니다.",
         )
 
     # -------------------------------------------------------------- 처리
@@ -305,7 +304,7 @@ class SendQueue(threading.Thread):
             self.stats.completed += 1
             self.stats.last_result = outcome.result
             if outcome.result == "unconfirmed":
-                logger.warning("방으로의 발신이 unconfirmed로 보고되었다. 재시도하지 않는다")
+                logger.warning("방으로의 발신이 unconfirmed로 보고되었습니다. 재시도하지 않습니다.")
             return result
         finally:
             archive.close()

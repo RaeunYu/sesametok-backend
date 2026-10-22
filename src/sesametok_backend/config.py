@@ -119,8 +119,8 @@ class Settings:
     poll_seconds: float = 3.0
     lookback_seconds: int = 900
     user_id_override: int | None = None
-    max_sends_per_minute: int = 6
-    max_sends_per_room_per_minute: int = 3
+    max_sends_per_minute: int = 60
+    max_sends_per_room_per_minute: int = 50
     no_menubar: bool = False
     api_enabled: bool = True
     log_level: str = "info"
@@ -150,8 +150,8 @@ class Settings:
             poll_seconds=env.float("POLL_SECONDS", 3.0),
             lookback_seconds=env.int("LOOKBACK_SECONDS", 900),
             user_id_override=env.positive_int("USER_ID"),
-            max_sends_per_minute=env.int("MAX_SENDS_PER_MINUTE", 6),
-            max_sends_per_room_per_minute=env.int("MAX_SENDS_PER_ROOM_PER_MINUTE", 3),
+            max_sends_per_minute=env.int("MAX_SENDS_PER_MINUTE", 60),
+            max_sends_per_room_per_minute=env.int("MAX_SENDS_PER_ROOM_PER_MINUTE", 50),
             no_menubar=env.boolean("NO_MENUBAR"),
             api_enabled=env.boolean("API", True),
             log_level=env.text("LOG_LEVEL", "info"),

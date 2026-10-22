@@ -208,7 +208,7 @@ class Poller(threading.Thread):
                     self.stats.consecutive_failures += 1
                     self.stats.last_error = type(exc).__name__
                     logger.warning(
-                        "폴링 실패 (%s); %.0f초 백오프한다", type(exc).__name__, backoff
+                        "폴링 실패 (%s); %.0f초 백오프합니다.", type(exc).__name__, backoff
                     )
                     self._stop.wait(min(backoff, MAX_BACKOFF_SECONDS))
                     backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
@@ -268,7 +268,7 @@ class Poller(threading.Thread):
         if backfill and self.settings.backfill_max > 0:
             if len(messages) > self.settings.backfill_max:
                 logger.info(
-                    "백필 상한 적용: 메시지 %d개 중 최신 %d개만 유지한다",
+                    "백필 상한 적용: 메시지 %d개 중 최신 %d개만 유지합니다.",
                     len(messages),
                     self.settings.backfill_max,
                 )

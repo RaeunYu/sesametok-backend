@@ -45,14 +45,14 @@ def parse_hex_key(value: str) -> bytes:
         text = text[2:-1]
     if not _HEX.match(text):
         raise ArchiveKeyError(
-            f"아카이브 키는 16진수 {KEY_HEX_LENGTH}자({KEY_BYTES}바이트)여야 한다"
+            f"아카이브 키는 16진수 {KEY_HEX_LENGTH}자({KEY_BYTES}바이트)여야 합니다."
         )
     return bytes.fromhex(text)
 
 
 def key_to_hex(key: bytes) -> str:
     if len(key) != KEY_BYTES:
-        raise ArchiveKeyError(f"아카이브 키는 {KEY_BYTES}바이트여야 하는데 {len(key)}바이트다")
+        raise ArchiveKeyError(f"아카이브 키는 {KEY_BYTES}바이트여야 하는데 {len(key)}바이트입니다.")
     return key.hex()
 
 
@@ -80,13 +80,13 @@ class SecurityCliKeychain:
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         if shutil.which(self.executable) is None:
-            raise ArchiveKeyError("macOS `security` 도구를 사용할 수 없다")
+            raise ArchiveKeyError("macOS `security` 도구를 사용할 수 없습니다.")
         try:
             return subprocess.run(
                 [self.executable, *args], capture_output=True, text=True, timeout=15, check=False
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            raise ArchiveKeyError(f"`security`를 실행할 수 없다: {exc}") from exc
+            raise ArchiveKeyError(f"`security`를 실행할 수 없습니다.: {exc}") from exc
 
     def get(self, service: str, account: str) -> bytes | None:
         result = self._run(
@@ -96,7 +96,7 @@ class SecurityCliKeychain:
             return None
         if result.returncode != 0:
             raise ArchiveKeyError(
-                f"키체인에서 아카이브 키를 읽을 수 없다: {result.stderr.strip()}"
+                f"키체인에서 아카이브 키를 읽을 수 없습니다.: {result.stderr.strip()}"
             )
         return parse_hex_key(result.stdout)
 
@@ -106,7 +106,7 @@ class SecurityCliKeychain:
         )
         if result.returncode != 0:
             raise ArchiveKeyError(
-                "키체인에 아카이브 키를 저장할 수 없다: "
+                "키체인에 아카이브 키를 저장할 수 없습니다.: "
                 f"{result.stderr.strip()}"
             )
 

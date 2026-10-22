@@ -246,7 +246,7 @@ def _reverse_lookup_candidate(
     targets = set(plist_util.active_account_hashes(plists)) - plist_util.empty_account_hashes()
     if not targets:
         return None
-    logger.info("%d개의 계정 해시에 대해 SHA-512 역방향 조회를 시작한다", len(targets))
+    logger.info("%d개의 계정 해시에 대해 SHA-512 역방향 조회를 시작합니다.", len(targets))
     found = reverse_lookup(targets, should_stop=should_stop)
     return None if found is None else (found, uuid, "reverse-lookup")
 
