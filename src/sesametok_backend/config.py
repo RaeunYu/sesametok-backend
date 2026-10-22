@@ -184,10 +184,6 @@ class Settings:
         return self.data_dir / "api_token"
 
     @property
-    def outbox_dir(self) -> Path:
-        return self.data_dir / "outbox"
-
-    @property
     def uds_path(self) -> Path:
         # UNIX 소켓 경로는 길이 제한이 있으므로(macOS에서 약 104바이트), 긴 데이터
         # 디렉터리를 위해 재정의할 수 있다.
@@ -252,7 +248,6 @@ class Settings:
         """이 프로세스가 쓰는 비공개 디렉터리를 만든다."""
 
         ensure_private_dir(self.data_dir)
-        ensure_private_dir(self.outbox_dir)
         ensure_private_dir(self.kakaotalk_auth_cache_path.parent)
         ensure_dir(self.log_dir)
 

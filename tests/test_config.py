@@ -83,7 +83,6 @@ def test_paths_are_derived_from_data_dir(tmp_path: Path) -> None:
     assert settings.archive_path == tmp_path / "archive.sqlite3"
     assert settings.api_token_path == tmp_path / "api_token"
     assert settings.uds_path == tmp_path / "backend.sock"
-    assert settings.outbox_dir == tmp_path / "outbox"
     assert settings.kakaotalk_auth_cache_path == tmp_path / "auth" / "kakao.json"
 
 
@@ -112,7 +111,6 @@ def test_ensure_directories_creates_private_dirs(tmp_path: Path) -> None:
     settings.ensure_directories()
 
     assert settings.data_dir.is_dir()
-    assert settings.outbox_dir.is_dir()
     assert settings.kakaotalk_auth_cache_path.parent.is_dir()
     assert settings.log_dir.is_dir()
     assert os.stat(settings.data_dir).st_mode & 0o777 == 0o700

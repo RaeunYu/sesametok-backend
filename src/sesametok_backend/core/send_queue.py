@@ -21,7 +21,6 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Protocol
 
 from ..config import Settings
@@ -44,7 +43,6 @@ class SendRequest:
     mode: str = "send"
     chat_id: str | None = None
     text: str | None = None
-    image_path: Path | None = None
     background_only: bool = False
     accept_use_policy: bool = False
     client_request_id: str | None = None
@@ -85,8 +83,6 @@ class MessageSender(Protocol):
     def send_text(
         self, target: SendTarget, text: str, *, mode: str, background_only: bool
     ) -> SendOutcome: ...
-
-    def send_image(self, target: SendTarget, path: Path, *, background_only: bool) -> SendOutcome: ...
 
 
 @dataclass
@@ -197,11 +193,8 @@ class SendQueue(threading.Thread):
         if not request.chat_id:
             raise SendError("bad_request", "chat_id는 필수다")
         has_text = bool(request.text)
-        has_image = request.image_path is not None
-        if request.mode == "send" and not has_text and not has_image:
-            raise SendError("bad_request", "text 또는 image_path가 필요하다")
-        if has_text and has_image:
-            raise SendError("bad_request", "텍스트와 이미지 중 하나만 보내야 한다")
+        if request.mode == "send" and not has_text:
+            raise SendError("bad_request", "text가 필요하다")
         if has_text and request.text and len(request.text) > 20_000:
             raise SendError("bad_request", "텍스트가 너무 길다")
 
@@ -318,10 +311,6 @@ class SendQueue(threading.Thread):
             archive.close()
 
     def _dispatch(self, request: SendRequest, target: SendTarget) -> SendOutcome:
-        if request.image_path is not None:
-            return self.sender.send_image(
-                target, request.image_path, background_only=request.background_only
-            )
         return self.sender.send_text(
             target,
             request.text or "",

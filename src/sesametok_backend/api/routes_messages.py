@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from ..core.send_queue import SendRequest
 from ..send.errors import SendError
 from .context import ApiContext
@@ -16,7 +14,6 @@ SEND_STATUS: dict[str, int] = {
     "bad_mode": 400,
     "no_consent": 400,
     "room_name_not_typable": 400,
-    "image_path_outside_outbox": 400,
     "room_not_found": 404,
     "target_ambiguous": 409,
     "ambiguous_room": 409,
@@ -26,22 +23,6 @@ SEND_STATUS: dict[str, int] = {
     "not_running": 503,
     "accessibility_denied": 503,
 }
-
-
-def _outbox_path(context: ApiContext, raw: object) -> Path:
-    """이미 우리 outbox 안에 있는 파일만 보낼 수 있다(경로 탈출 금지)."""
-
-    if not isinstance(raw, str) or not raw.strip():
-        raise bad_request("image_path는 문자열이어야 합니다", "image_path_outside_outbox")
-    outbox = context.settings.outbox_dir.resolve()
-    candidate = Path(raw).expanduser().resolve()
-    if outbox not in candidate.parents or not candidate.is_file():
-        raise bad_request(
-            "image_path는 outbox 디렉터리 안에 있는 기존 파일이어야 합니다 "
-            f"({outbox})",
-            "image_path_outside_outbox",
-        )
-    return candidate
 
 
 def get_message(context: ApiContext, request: Request) -> Response:
@@ -78,16 +59,10 @@ def post_message(context: ApiContext, request: Request) -> Response:
         )
 
     payload = request.json()
-    image_path = (
-        _outbox_path(context, payload.get("image_path"))
-        if payload.get("image_path")
-        else None
-    )
     request_model = SendRequest(
         mode=payload.get("mode", "send") if isinstance(payload.get("mode", "send"), str) else "",
         chat_id=str(payload["chat_id"]) if payload.get("chat_id") is not None else None,
         text=payload.get("text") if isinstance(payload.get("text"), str) else None,
-        image_path=image_path,
         background_only=bool(payload.get("background_only", False)),
         accept_use_policy=bool(payload.get("accept_use_policy", False)),
         client_request_id=payload.get("client_request_id")

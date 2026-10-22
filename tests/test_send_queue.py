@@ -29,10 +29,6 @@ class FakeSender:
         self.calls.append(("text", target.chat_id, text, mode, background_only))
         return self.outcome
 
-    def send_image(self, target, path, *, background_only):
-        self.calls.append(("image", target.chat_id, str(path), background_only))
-        return self.outcome
-
 
 def _settings(tmp_path: Path, **overrides) -> Settings:
     base = dict(
@@ -221,37 +217,6 @@ def test_dry_run_does_not_consume_rate_limit(tmp_path: Path) -> None:
     queue.process(
         SendRequest(mode="send", chat_id="100", text="x", accept_use_policy=True)
     )
-
-
-def test_image_send_uses_the_image_path(tmp_path: Path) -> None:
-    settings, queue, sender = _setup(tmp_path)
-    image = tmp_path / "picture.png"
-    image.write_bytes(b"\x89PNG")
-
-    result = queue.process(
-        SendRequest(mode="send", chat_id="100", image_path=image, accept_use_policy=True)
-    )
-
-    assert result.result == "sent"
-    assert sender.calls[0][0] == "image"
-
-
-def test_text_and_image_together_are_rejected(tmp_path: Path) -> None:
-    settings, queue, sender = _setup(tmp_path)
-    image = tmp_path / "picture.png"
-    image.write_bytes(b"\x89PNG")
-
-    with pytest.raises(SendError) as excinfo:
-        queue.process(
-            SendRequest(
-                mode="send",
-                chat_id="100",
-                text="hi",
-                image_path=image,
-                accept_use_policy=True,
-            )
-        )
-    assert excinfo.value.code == "bad_request"
 
 
 def test_missing_payload_is_rejected(tmp_path: Path) -> None:

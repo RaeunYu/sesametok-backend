@@ -73,7 +73,6 @@ def test_module_imports_without_appkit() -> None:
     assert ax.KEY_ENTER == 36
     assert ax.KEY_CMD_V == 9
     assert ax.KEY_ESC == 53
-    assert ax.IMAGE_UTIS[".png"] == "public.png"
 
 
 def test_missing_permission_refuses_before_anything_else(monkeypatch) -> None:

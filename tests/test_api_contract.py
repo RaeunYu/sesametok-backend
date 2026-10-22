@@ -319,42 +319,6 @@ def test_send_with_consent_succeeds(api) -> None:
     assert context.send_queue.requests[-1].text == "hi"
 
 
-def test_image_path_must_live_in_the_outbox(api) -> None:
-    service, _, settings = api
-    settings.ensure_directories()
-
-    status, payload = call(
-        service,
-        "POST",
-        "/v1/messages",
-        body={
-            "chat_id": "100",
-            "mode": "send",
-            "accept_use_policy": True,
-            "image_path": "/etc/hosts",
-        },
-    )
-
-    assert status == 400
-    assert payload["error"]["code"] == "image_path_outside_outbox"
-
-    inside = settings.outbox_dir / "picture.png"
-    inside.write_bytes(b"\x89PNG")
-    status, payload = call(
-        service,
-        "POST",
-        "/v1/messages",
-        body={
-            "chat_id": "100",
-            "mode": "send",
-            "accept_use_policy": True,
-            "image_path": str(inside),
-        },
-    )
-    assert status == 200
-    assert payload["result"] == "sent"
-
-
 def test_unknown_route_and_method(api) -> None:
     service, _, _ = api
     assert call(service, "GET", "/v1/nope")[0] == 404

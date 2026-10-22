@@ -19,7 +19,6 @@ import logging
 import subprocess
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -40,8 +39,6 @@ FRONTMOST_RETRY_DELAY = 0.06
 MAIN_WINDOW_SAMPLE = 10
 COMPOSE_DRAIN = (20, 0.05)
 CONTENT_CONFIRM_WAIT = (30, 0.05)
-RAISE_DELAY = 0.2
-IMAGE_CONFIRM_WAIT = (40, 0.10)
 DRAFT_VERIFY_WAIT = (30, 0.05)
 TYPING_INTERVAL = 0.008
 OVERLAY_ACK_MAX = 0.6
@@ -57,18 +54,6 @@ SEND_DEADLINE_SECONDS = 60.0
 KEY_ENTER = 36
 KEY_CMD_V = 9
 KEY_ESC = 53
-
-IMAGE_UTIS = {
-    ".png": "public.png",
-    ".jpg": "public.jpeg",
-    ".jpeg": "public.jpeg",
-    ".gif": "com.compuserve.gif",
-    ".tif": "public.tiff",
-    ".tiff": "public.tiff",
-    ".bmp": "com.microsoft.bmp",
-    ".heic": "public.heic",
-    ".webp": "org.webmproject.webp",
-}
 
 SEND_BUTTON_TITLES = ("Send", "전송")
 
@@ -649,86 +634,6 @@ class KakaoTalkDriver:
         if not self._frontmost(app):
             self._activate(app)
         self._post_key(KEY_CMD_V, flags=self.framework.CommandFlag)
-
-    def send_image(self, target: SendTarget, path: Path, *, background_only: bool = False):
-        from ..core.send_queue import SendOutcome
-
-        self.background_only = background_only
-        extension = path.suffix.lower()
-        uti = IMAGE_UTIS.get(extension)
-        if uti is None or not path.is_file():
-            raise SendError(
-                "bad_request", f"지원하지 않는 이미지 형식입니다 {extension!r}"
-            )
-        self._require_permission()
-        self._require_running()
-        self._deadline = _Deadline(SEND_DEADLINE_SECONDS)
-
-        app = self._app_element()
-        window = self.find_window(target)
-        compose = self._find_compose_box(window)
-        if compose is None:
-            raise SendError("compose_box_not_found", room=target.room_name)
-
-        pasteboard = self.framework.NSPasteboard.generalPasteboard()
-        pasteboard.clearContents()
-        from AppKit import NSImage  # type: ignore[import-not-found]
-
-        image = NSImage.alloc().initWithContentsOfFile_(str(path))
-        if image is None:
-            raise SendError("bad_request", "이미지 파일을 읽을 수 없습니다")
-        pasteboard.writeObjects_([image])
-
-        if background_only:
-            # 이미지 붙여넣기는 최전면 앱으로 전역 Cmd+V를 보내야 한다.
-            raise SendError("background_only_unsupported")
-
-        self._wait_for_idle()
-        shown = self._raise_curtain()
-        try:
-            if self._curtain_cancelled():
-                raise SendError("cancelled")
-            self._activate(app)
-            self._raise(window)
-            _sleep(RAISE_DELAY)
-            self._post_key(KEY_CMD_V, flags=self.framework.CommandFlag)
-
-            if self._confirm_image_send(window):
-                return SendOutcome("sent")
-            return SendOutcome(
-                "unconfirmed", "image_not_sent", str(SendError("image_not_sent"))
-            )
-        finally:
-            if shown:
-                self.curtain.hide()
-
-    def _confirm_image_send(self, window) -> bool:
-        from ..core.send_queue import SendOutcome  # noqa: F401 - 일관성을 위해
-
-        def confirmed() -> bool:
-            sheet = self._find_role(window, "AXSheet", depth_limit=4)
-            if sheet is not None:
-                for element in [sheet, *self._descendants(sheet)]:
-                    role = _text_attr(self.framework, element, "AXRole") or ""
-                    title = _text_attr(self.framework, element, "AXTitle") or ""
-                    if role == "AXButton" and title in ("전송", "Send", "확인", "OK"):
-                        self._press(element)
-                        return True
-            return False
-
-        return _wait_for(confirmed, *IMAGE_CONFIRM_WAIT) is not None
-
-    def _find_role(self, root, role_name: str, *, depth_limit: int):
-        stack = [(root, 0)]
-        while stack:
-            element, depth = stack.pop()
-            if depth > depth_limit:
-                continue
-            for child in _attr(self.framework, element, "AXChildren") or []:
-                if (_text_attr(self.framework, child, "AXRole") or "") == role_name:
-                    return child
-                stack.append((child, depth + 1))
-        return None
 
     def cancel(self) -> None:
         """진행 중인 보이는 전송을 취소한다(Esc는 화면에 표시된 뒤에만 유효하다)."""
