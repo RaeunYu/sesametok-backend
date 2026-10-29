@@ -292,7 +292,7 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 | `SESAMETOK_POLL_SECONDS` / `SESAMETOK_LOOKBACK_SECONDS` | 폴링 주기 / 수정 감지 창 | `3` / `900` |
 | `SESAMETOK_BACKFILL_DAYS` / `SESAMETOK_BACKFILL_MAX` | 최초 백필 상한 | `30` / `100000` |
 | `SESAMETOK_EVENT_RETENTION_DAYS` / `..._MAX` | 이벤트 보존 | `30` / `100000` |
-| `SESAMETOK_MAX_SENDS_PER_MINUTE` / `..._PER_ROOM_PER_MINUTE` | 전송 레이트 리밋 | `6` / `3` |
+| `SESAMETOK_MAX_SENDS_PER_MINUTE` / `..._PER_ROOM_PER_MINUTE` | 전송 레이트 리밋 | `60` / `50` |
 | `SESAMETOK_WEBHOOK_TIMEOUT_SECONDS` / `..._MAX_ATTEMPTS` | webhook 전달 | `5` / `5` |
 | `SESAMETOK_UDS` / `SESAMETOK_UDS_PATH` | UDS 사용 / 경로 | `1` / `<data_dir>/backend.sock` |
 | `SESAMETOK_LAUNCHD_PLIST` | plist 경로 override | `~/Library/LaunchAgents/com.sesametok.sesametok-backend.plist` |

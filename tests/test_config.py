@@ -15,14 +15,14 @@ from sesametok_backend.config import (
 
 
 def test_defaults_are_local_and_personal() -> None:
-    settings = Settings.from_env({})
+    settings = Settings.from_env({"SESAMETOK_MAX_SENDS_PER_MINUTE": "6"})
 
     assert settings.host == DEFAULT_HOST
     assert settings.port == DEFAULT_PORT
     assert settings.poll_seconds == 3.0
     assert settings.lookback_seconds == 900
     assert settings.uds_enabled is True
-    assert settings.max_sends_per_minute == 6
+    assert settings.max_sends_per_minute == 60
     assert settings.event_retention_days == 30
     assert settings.event_retention_max == 100_000
     assert settings.backfill_days == 30
