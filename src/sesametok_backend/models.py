@@ -21,6 +21,8 @@ class Room:
     chat_type: str  # "direct" | "group"
     last_message_at: str | None = None
     message_count: int | None = None
+    exposed: bool = False
+    """외부 클라이언트에 노출하기로 **사용자가 지정**한 방인가(기본 False)."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

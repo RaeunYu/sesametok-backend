@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from ..core.preferences import DEFAULT_POLL_SECONDS, coerce_poll_seconds
+from . import room_picker
 
 #: 이 값 이상으로 연속 폴링 실패가 쌓이면 ``Status.error``가 된다.
 #: 1 이상 이 임계값 미만은 ``Status.degraded``다.
@@ -213,6 +214,8 @@ class StatusSnapshot:
     """launchd가 이 프로세스를 관리하면 True이며, 그러면 메뉴의 재시작 항목이 활성화된다."""
 
     poll_seconds: float = DEFAULT_POLL_SECONDS
+    exposed_count: int = 0
+    room_total: int = 0
     """현재 폴링 주기(초)이며, "동기화 주기" 하위 메뉴의 체크 표시를 정한다."""
 
     webhooks: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
@@ -234,6 +237,8 @@ def build_snapshot(
     autostart: bool = False,
     managed: bool = False,
     poll_seconds: float | None = None,
+    exposed_count: int = 0,
+    room_total: int = 0,
     webhooks: Iterable[Mapping[str, object]] = (),
     now: datetime | float | int | str | None = None,
     failure_threshold: int = FAILURE_THRESHOLD,
@@ -271,6 +276,8 @@ def build_snapshot(
         autostart=autostart,
         managed=managed,
         poll_seconds=interval if interval is not None else DEFAULT_POLL_SECONDS,
+        exposed_count=exposed_count,
+        room_total=room_total,
         webhooks=tuple(webhooks),
     )
 
@@ -288,6 +295,7 @@ ACTION_TOGGLE_AUTOSTART = "toggle_autostart"
 ACTION_QUIT = "quit"
 ACTION_RESTART = "restart"
 ACTION_SET_INTERVAL = "set_interval"
+ACTION_MANAGE_EXPOSED = "manage_exposed_rooms"
 
 #: 항목 종류: 비활성 상태 줄, 일반 동작, 체크박스, 설명용 비활성 줄, 구분선,
 #: 폴링 주기 선택지(라디오형, 현재 값에만 체크).
@@ -317,6 +325,7 @@ ITEM_INFO_STORAGE = "info_storage"
 ITEM_RESTART = "restart"
 ITEM_QUIT = "quit"
 ITEM_INTERVAL = "interval"
+ITEM_EXPOSED_ROOMS = "exposed_rooms"
 
 #: 하위 메뉴 "동기화 주기"의 선택지(초). 저장값이 이 밖의 값이면 어느 항목도
 #: 체크하지 않는다 — 현재 값을 다른 값으로 왜곡해서 보여주지 않는다.
@@ -502,6 +511,12 @@ def menu_items(
     items.extend(
         [
             MenuItem("separator-actions", "", False, None, None, KIND_SEPARATOR),
+            MenuItem(
+                ITEM_EXPOSED_ROOMS,
+                room_picker.summary(snapshot.exposed_count, snapshot.room_total),
+                True,
+                ACTION_MANAGE_EXPOSED,
+            ),
             MenuItem(ITEM_SYNC_NOW, "지금 동기화", snapshot.polling, ACTION_SYNC_NOW),
             MenuItem(
                 ITEM_TOGGLE_PAUSE,

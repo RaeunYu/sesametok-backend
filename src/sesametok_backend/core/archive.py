@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS chats (
     chat_id TEXT PRIMARY KEY,
     chat_name TEXT NOT NULL,
     chat_type TEXT NOT NULL,
-    last_message_at TEXT
+    last_message_at TEXT,
+    exposed INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,13 +162,23 @@ def _text_hash(text: str) -> str:
 def _migrate_schema(connection) -> None:
     """이전 아카이브에 새 컬럼을 더한다(기존 데이터는 기본값으로 남는다)."""
 
-    existing = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
-    for name, ddl in (
-        ("is_from_me", "ALTER TABLE messages ADD COLUMN is_from_me INTEGER NOT NULL DEFAULT 0"),
-        ("origin_client_request_id", "ALTER TABLE messages ADD COLUMN origin_client_request_id TEXT"),
-    ):
-        if name not in existing:
-            connection.execute(ddl)
+    additions = {
+        "messages": (
+            ("is_from_me", "ALTER TABLE messages ADD COLUMN is_from_me INTEGER NOT NULL DEFAULT 0"),
+            (
+                "origin_client_request_id",
+                "ALTER TABLE messages ADD COLUMN origin_client_request_id TEXT",
+            ),
+        ),
+        "chats": (
+            ("exposed", "ALTER TABLE chats ADD COLUMN exposed INTEGER NOT NULL DEFAULT 0"),
+        ),
+    }
+    for table, columns in additions.items():
+        existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        for name, ddl in columns:
+            if name not in existing:
+                connection.execute(ddl)
 
 
 def _chunks(items: Sequence[str], size: int = CHUNK) -> Iterable[Sequence[str]]:
@@ -286,12 +297,13 @@ class Archive:
             )
         return diff
 
-    def rooms(self) -> list[Room]:
+    def rooms(self, *, exposed_only: bool = False) -> list[Room]:
+        where = " WHERE c.exposed = 1" if exposed_only else ""
         rows = self._con.execute(
             "SELECT c.chat_id, c.chat_name, c.chat_type, c.last_message_at, "
             "(SELECT count(*) FROM messages m "
-            " WHERE m.account_hash = ? AND m.chat_id = c.chat_id) "
-            "FROM chats c ORDER BY c.chat_id",
+            " WHERE m.account_hash = ? AND m.chat_id = c.chat_id), c.exposed "
+            f"FROM chats c{where} ORDER BY c.chat_id",
             (self.account_hash,),
         ).fetchall()
         return [
@@ -301,15 +313,32 @@ class Archive:
                 chat_type=str(row[2]),
                 last_message_at=row[3],
                 message_count=int(row[4]),
+                exposed=bool(row[5]),
             )
             for row in rows
         ]
+
+    def count_exposed_rooms(self) -> int:
+        return int(
+            self._con.execute("SELECT count(*) FROM chats WHERE exposed = 1").fetchone()[0]
+        )
+
+    def set_room_exposed(self, chat_id: str, exposed: bool) -> Room | None:
+        """방의 노출 표시만 바꾼다(카카오톡은 건드리지 않는다). 없으면 ``None``."""
+
+        cursor = self._con.execute(
+            "UPDATE chats SET exposed = ? WHERE chat_id = ?",
+            (1 if exposed else 0, str(chat_id)),
+        )
+        if (cursor.rowcount or 0) == 0:
+            return None
+        return self.room(chat_id)
 
     def room(self, chat_id: str) -> Room | None:
         row = self._con.execute(
             "SELECT c.chat_id, c.chat_name, c.chat_type, c.last_message_at, "
             "(SELECT count(*) FROM messages m "
-            " WHERE m.account_hash = ? AND m.chat_id = c.chat_id) "
+            " WHERE m.account_hash = ? AND m.chat_id = c.chat_id), c.exposed "
             "FROM chats c WHERE c.chat_id = ?",
             (self.account_hash, chat_id),
         ).fetchone()
@@ -321,6 +350,7 @@ class Archive:
             chat_type=str(row[2]),
             last_message_at=row[3],
             message_count=int(row[4]),
+            exposed=bool(row[5]),
         )
 
     def count_rooms(self) -> int:

@@ -224,8 +224,9 @@ sesametok-backend permissions --accessibility  # 손쉬운 사용 설정 창
 |---|---|
 | `GET /health` | 생존/준비 상태(토큰 불필요) |
 | `GET /v1/status` | 진단(권한·폴링·아카이브·webhook) |
-| `GET /v1/rooms` | 방 목록 |
+| `GET /v1/rooms` | 방 목록 (`?exposed=1`이면 노출된 방만) |
 | `GET /v1/rooms/{chat_id}` | 방 단건 |
+| `PATCH /v1/rooms/{chat_id}` | 노출 대상 지정 `{"exposed": true}` (ADR-023) |
 | `GET /v1/rooms/{chat_id}/messages` | 대화 조회 `?since=&until=&limit=&before=` |
 | `GET /v1/messages/{message_id}` | 메시지 단건 |
 | `GET /v1/events` | SSE. `Last-Event-ID`/`?since=`로 재개 |

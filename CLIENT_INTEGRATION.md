@@ -98,6 +98,7 @@ Slack/Telegram/TUI 같은 인터페이스는 **클라이언트 프로젝트**가
 | `chat_type` | `"direct"` \| `"group"` | type 0/2, `directChatMemberUserId`, 활성 멤버 2명 중 하나로 판정 |
 | `last_message_at` | RFC3339 UTC \| null | 아카이브 기준 마지막 메시지 시각 |
 | `message_count` | int | 아카이브에 보관된 메시지 수 |
+| `exposed` | bool | **외부 클라이언트에 노출하기로 사용자가 지정한 방**인가(기본 `false`) |
 
 **`chat_name` 생성 규칙**(`kakao/reader.py`):
 
@@ -297,12 +298,39 @@ Slack/Telegram/TUI 같은 인터페이스는 **클라이언트 프로젝트**가
 
 ```json
 {"rooms": [{"chat_id": "…", "chat_name": "…", "chat_type": "direct",
-            "last_message_at": "2026-10-19T06:46:02+00:00", "message_count": 3}]}
+            "last_message_at": "2026-10-19T06:46:02+00:00", "message_count": 3,
+            "exposed": false}]}
 ```
+
+쿼리 `exposed`:
+
+| 값 | 동작 |
+|---|---|
+| 생략 | **전체 방**(기존과 동일, 기본 동작 불변) |
+| `exposed=1` / `exposed=true` | 노출된 방만 |
+| 그 밖(`0`, `2`, …) | `400 bad_request` |
+
+정렬은 기존 규칙(`chat_id` 오름차순) 그대로입니다. **기본 응답을 "노출만"으로 바꾸지
+마세요** — 기존·미래 클라이언트의 계약이 깨집니다.
 
 #### `GET /v1/rooms/{chat_id}`
 
 `Room` 객체 하나. 없으면 `404 room_not_found`.
+
+#### `PATCH /v1/rooms/{chat_id}` — 노출 대상 지정
+
+```json
+{"exposed": true}
+```
+
+응답 `200`은 변경이 반영된 **Room 객체** 하나입니다.
+
+- **멱등**입니다. 같은 값으로 다시 호출해도 `200`입니다.
+- 없는 `chat_id` → `404 room_not_found`
+- `exposed`가 JSON boolean이 아니거나(`"true"` 같은 문자열) 본문이 객체가 아니면 → `400 bad_request`
+- **성공할 때마다 `room.updated` 이벤트를 발행**합니다(payload는 Room 전체, `seq`를 소비).
+  메뉴바에서 토글한 사실도 같은 이벤트로 관측됩니다.
+- 이 호출은 **카카오톡을 건드리지 않습니다.** 아카이브 메타데이터만 바꿉니다.
 
 #### `GET /v1/rooms/{chat_id}/messages`
 
@@ -611,7 +639,7 @@ if result.get("result") != "dry_run":
 ### 6.1 이 저장소의 테스트
 
 ```bash
-./.venv/bin/python -m pytest -q                       # 전체(현재 411개 통과)
+./.venv/bin/python -m pytest -q                       # 전체(현재 425개 통과)
 ./.venv/bin/python -m pytest -q tests/test_api_contract.py
 ./.venv/bin/python -m compileall -q src tests
 ```
@@ -648,7 +676,7 @@ if result.get("result") != "dry_run":
 
 | 항목 | 값 |
 |---|---|
-| 테스트 | **411 passed** |
+| 테스트 | **425 passed** |
 | 실행 | launchd → `SesametokBackend.app` → python `foreground --managed` |
 | 아카이브 | 방·메시지 수는 시점에 따라 증가(예: 411방 / 11,455메시지) |
 | 권한 | 손쉬운 사용 = 백엔드 기준 `true` / 셸 기준 `false` (앱에만 귀속) |
@@ -684,6 +712,8 @@ if result.get("result") != "dry_run":
 | API를 `0.0.0.0`에 바인딩하거나 인터넷에 노출 | 로컬 개인 대화의 무단 노출 | `127.0.0.1`/UDS만. 터널링 금지 |
 | 카카오톡 DB를 쓰기/수정 | 원본 손상 | 읽기 전용 API만 사용 |
 | `unconfirmed` 결과를 자동 재시도 | 중복 전송 | 사용자 확인, 새 `client_request_id`로 새 요청 |
+| **노출 목록을 클라이언트마다 따로 관리** | 다중 클라이언트에서 불일치·중복 구현 | `GET /v1/rooms?exposed=1`로 읽고 `PATCH /v1/rooms/{chat_id}`로 쓴다(백엔드가 단일 출처) |
+| 이벤트 스트림을 노출 여부로 거르기를 기대 | **서버는 절대 필터하지 않는다**(`seq` 연속성 계약) | 클라이언트가 노출 집합을 들고 거른다 |
 | 에코 억제를 클라이언트가 자체 발명(텍스트+시간창) | 백엔드가 `origin_client_request_id`를 준다 | 그 값으로 판정. 휴리스틱은 정상 메시지를 놓친다 |
 | 발신 시 `client_request_id` 생략 | 에코 연결 정보가 없다 | 항상 보낼 것 |
 | `client_request_id` 재사용(다른 본문) | 이전 결과만 반환됨 | 요청마다 새 UUID |
@@ -781,6 +811,8 @@ curl -s http://127.0.0.1:8756/health
 16. **발신 레이트 리밋 기본값 변경**: 6/3 → **60/50**(커밋 `0f29900`).
 17. **발신 에코 상관**(ADR-022): `is_from_me`와 `origin_client_request_id`를 추가해, 양방향
     클라이언트가 자기 발신이 되돌아오는 이벤트를 **추측 없이** 걸러낼 수 있게 했습니다.
+18. **노출 대상 방 정책**(ADR-023): `rooms.exposed` + `GET /v1/rooms?exposed=1` +
+    `PATCH /v1/rooms/{chat_id}` + 메뉴바 관리 창. **스트림은 필터하지 않습니다.**
 
 **제거된 것을 기억하세요**: 자동 방 열기, 이미지/파일 발신, `image_path` API 필드, outbox 디렉터리,
 커튼 기반 취소(코드는 잔존하나 미사용). `HANDOFF_MESSAGING.md`는 이 제거 이전의 역사 문서이며

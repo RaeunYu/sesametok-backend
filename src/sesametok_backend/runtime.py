@@ -477,7 +477,43 @@ class Runtime:
             restart_provider=self.restart_enabled,
             interval_provider=self.poll_interval,
             set_interval=self.set_poll_interval,
+            exposed_rooms_provider=self.exposed_room_rows,
+            apply_exposed=self.set_room_exposed,
         )
+
+    def set_room_exposed(self, chat_id: str, exposed: bool) -> bool:
+        """노출 표시를 바꾼다(메뉴바·API 공용 경로). 카카오톡은 건드리지 않는다."""
+
+        if self._archive_key is None or self.account_hash is None:
+            return False
+        from .core.rooms import set_exposed
+
+        archive = Archive.open(
+            self.settings,
+            self._archive_key,
+            account_hash=self.account_hash,
+            initialize=False,
+        )
+        try:
+            return set_exposed(archive, self._bus, chat_id, exposed) is not None
+        finally:
+            archive.close()
+
+    def exposed_room_rows(self) -> list[dict]:
+        """선택 창에 넘길 방 목록(이름·종류·최근 시각·노출 여부)."""
+
+        if self._archive_key is None or self.account_hash is None:
+            return []
+        archive = Archive.open(
+            self.settings,
+            self._archive_key,
+            account_hash=self.account_hash,
+            initialize=False,
+        )
+        try:
+            return [room.to_dict() for room in archive.rooms()]
+        finally:
+            archive.close()
 
     def autostart_enabled(self) -> bool:
         """이 사용자에게 LaunchAgent가 설치되어 있으면 True.

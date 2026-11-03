@@ -6,7 +6,7 @@ from .context import ApiContext
 from .router import Router
 from .routes_events import get_events
 from .routes_messages import get_message, post_message, post_sync
-from .routes_rooms import get_room, get_room_messages, list_rooms
+from .routes_rooms import get_room, get_room_messages, list_rooms, patch_room
 from .routes_status import get_health, get_status
 from .routes_webhooks import (
     create_webhook,
@@ -23,6 +23,7 @@ def build_router(context: ApiContext | None = None) -> Router:
 
     router.add("GET", "/v1/rooms", list_rooms)
     router.add("GET", "/v1/rooms/{chat_id}", get_room)
+    router.add("PATCH", "/v1/rooms/{chat_id}", patch_room)
     router.add("GET", "/v1/rooms/{chat_id}/messages", get_room_messages)
 
     router.add("GET", "/v1/messages/{message_id}", get_message)

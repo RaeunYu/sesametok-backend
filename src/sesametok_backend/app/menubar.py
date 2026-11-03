@@ -42,6 +42,7 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from .. import diagnostics
+from . import room_picker
 from . import status as status_model
 from .status import MenuItem, Status, StatusSnapshot
 
@@ -132,6 +133,7 @@ class RuntimeStatusProvider:
         self._interval_provider = interval_provider
         self._clock = clock
         self._rooms: int | None = None
+        self._exposed: int = 0
         self._webhooks: tuple[Mapping[str, object], ...] = ()
         self._archive_at: float | None = None
 
@@ -139,7 +141,7 @@ class RuntimeStatusProvider:
         health = self._runtime.health()
         poller = self._runtime.poller
         stats = poller.stats if poller is not None else None
-        rooms, webhooks = self._archive_state()
+        rooms, exposed, webhooks = self._archive_state()
         report = self._runtime.diagnostic_report
         interval = self._interval_provider() if self._interval_provider is not None else None
         return status_model.build_snapshot(
@@ -156,6 +158,8 @@ class RuntimeStatusProvider:
             last_sync_at=stats.last_success_at if stats is not None else health.get("last_sync_at"),
             starting=not bool(health.get("running")),
             room_count=rooms,
+            exposed_count=exposed,
+            room_total=rooms or 0,
             store_readable=bool(report.get("store_readable", False)),
             accessibility_trusted=report.get("accessibility_trusted"),
             autostart=bool(self._autostart_provider()) if self._autostart_provider else False,
@@ -164,27 +168,191 @@ class RuntimeStatusProvider:
             webhooks=webhooks,
         )
 
-    def _archive_state(self) -> tuple[int | None, tuple[Mapping[str, object], ...]]:
+    def _archive_state(self) -> tuple[int | None, int, tuple[Mapping[str, object], ...]]:
         now = self._clock()
         if self._archive_at is not None and now - self._archive_at < self._archive_interval:
-            return self._rooms, self._webhooks
+            return self._rooms, self._exposed, self._webhooks
         try:
             archive = self._runtime.archive_factory()()
         except Exception:
             logger.debug("메뉴 상태를 위한 아카이브가 아직 준비되지 않았습니다", exc_info=True)
-            return self._rooms, self._webhooks
+            return self._rooms, self._exposed, self._webhooks
         try:
             self._rooms = archive.count_rooms()
+            self._exposed = archive.count_exposed_rooms()
             self._webhooks = tuple(archive.list_webhooks(include_secret=False))
             self._archive_at = now
         except Exception:
             logger.debug("아카이브 메뉴 상태를 읽지 못했습니다", exc_info=True)
         finally:
             archive.close()
-        return self._rooms, self._webhooks
+        return self._rooms, self._exposed, self._webhooks
 
 
 # ------------------------------------------------------------------ 컨트롤러
+
+
+class _FlippedView(AppKit.NSView):
+    """위에서 아래로 쌓기 위한 뒤집힌 문서 뷰."""
+
+    def isFlipped(self) -> bool:  # noqa: N802 - AppKit 명명
+        return True
+
+
+class ExposedRoomsPanel(Foundation.NSObject):
+    """노출 방 선택 창. AppKit은 메인 스레드 전용이며 계산은 room_picker가 한다."""
+
+    def init(self) -> Any:
+        self = objc.super(ExposedRoomsPanel, self).init()
+        if self is None:
+            return None
+        self._window: Any = None
+        self._search: Any = None
+        self._scroll: Any = None
+        self._document: Any = None
+        self._rooms: list[Mapping[str, object]] = []
+        self._row_ids: list[str] = []
+        self._selected: dict[str, bool] = {}
+        self._initial: dict[str, bool] = {}
+        self._applier: Callable[[str, bool], bool] | None = None
+        self._on_saved: Callable[[], None] | None = None
+        return self
+
+    @objc.python_method
+    def present(
+        self,
+        rooms: list[Mapping[str, object]],
+        applier: Callable[[str, bool], bool],
+        on_saved: Callable[[], None],
+    ) -> None:
+        self._rooms = list(rooms)
+        self._applier = applier
+        self._on_saved = on_saved
+        self._selected = {
+            str(room.get("chat_id")): bool(room.get("exposed")) for room in self._rooms
+        }
+        self._initial = dict(self._selected)
+
+        if self._window is None:
+            self._build()
+        self._rebuild()
+        assert self._window is not None
+        self._window.makeKeyAndOrderFront_(None)
+        AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+
+    # ------------------------------------------------------------------ 구성
+
+    @objc.python_method
+    def _build(self) -> None:
+        width, height = 520.0, 620.0
+        window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            Foundation.NSMakeRect(0, 0, width, height),
+            AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable,
+            AppKit.NSBackingStoreBuffered,
+            False,
+        )
+        window.setTitle_("노출 방 관리")
+        window.setReleasedWhenClosed_(False)
+        window.center()
+        content = window.contentView()
+
+        self._search = AppKit.NSSearchField.alloc().initWithFrame_(
+            Foundation.NSMakeRect(12, height - 46, width - 24, 28)
+        )
+        self._search.setPlaceholderString_("방 이름 검색")
+        self._search.setTarget_(self)
+        self._search.setAction_("searchChanged:")
+        content.addSubview_(self._search)
+
+        self._scroll = AppKit.NSScrollView.alloc().initWithFrame_(
+            Foundation.NSMakeRect(12, 56, width - 24, height - 116)
+        )
+        self._scroll.setHasVerticalScroller_(True)
+        self._document = _FlippedView.alloc().initWithFrame_(
+            Foundation.NSMakeRect(0, 0, width - 40, 10)
+        )
+        self._scroll.setDocumentView_(self._document)
+        content.addSubview_(self._scroll)
+
+        self._make_button("저장", Foundation.NSMakeRect(width - 208, 14, 92, 30), "save:", content)
+        self._make_button("닫기", Foundation.NSMakeRect(width - 108, 14, 92, 30), "close:", content)
+        self._window = window
+
+    @objc.python_method
+    def _make_button(self, title: str, rect: Any, action: str, parent: Any) -> None:
+        button = AppKit.NSButton.alloc().initWithFrame_(rect)
+        button.setTitle_(title)
+        button.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        button.setTarget_(self)
+        button.setAction_(action)
+        parent.addSubview_(button)
+
+    @objc.python_method
+    def _rebuild(self) -> None:
+        if self._document is None:
+            return
+        for view in list(self._document.subviews()):
+            view.removeFromSuperview()
+        query = self._search.stringValue() if self._search is not None else ""
+        rows = room_picker.filtered_rooms(self._rooms, query)
+        self._row_ids = []
+        width = max(240.0, float(self._scroll.frame().size.width) - 24.0)
+        y = 4.0
+        for room in rows:
+            chat_id = str(room.get("chat_id"))
+            self._row_ids.append(chat_id)
+            button = AppKit.NSButton.alloc().initWithFrame_(
+                Foundation.NSMakeRect(6, y, width, 24)
+            )
+            button.setButtonType_(AppKit.NSButtonTypeSwitch)
+            button.setTitle_(f"{room.get('chat_name')} ({room.get('chat_type')})")
+            button.setState_(
+                AppKit.NSControlStateValueOn
+                if self._selected.get(chat_id)
+                else AppKit.NSControlStateValueOff
+            )
+            button.setTag_(len(self._row_ids) - 1)
+            button.setTarget_(self)
+            button.setAction_("toggle:")
+            self._document.addSubview_(button)
+            y += 26.0
+        self._document.setFrame_(
+            Foundation.NSMakeRect(0, 0, width + 12, max(y, 10.0))
+        )
+
+    # ---------------------------------------------------------------- 액션
+
+    def searchChanged_(self, sender: Any) -> None:
+        self._rebuild()
+
+    def toggle_(self, sender: Any) -> None:
+        index = int(sender.tag())
+        if 0 <= index < len(self._row_ids):
+            self._selected[self._row_ids[index]] = (
+                sender.state() == AppKit.NSControlStateValueOn
+            )
+
+    def save_(self, sender: Any) -> None:
+        changes = room_picker.changed_rooms(self._initial, self._selected)
+        failed = 0
+        for chat_id, exposed in changes:
+            try:
+                if self._applier is None or not self._applier(chat_id, exposed):
+                    failed += 1
+            except Exception:
+                failed += 1
+                logger.warning("노출 표시를 저장하지 못했습니다(chat_id=%s)", chat_id)
+        logger.info("노출 방 변경 %d건 적용(실패 %d건)", len(changes), failed)
+        if self._on_saved is not None:
+            try:
+                self._on_saved()
+            except Exception:
+                logger.debug("저장 후 새로고침에 실패했습니다", exc_info=True)
+        self.close_(None)
+
+    def close_(self, sender: Any) -> None:
+        if self._window is not None:
+            self._window.orderOut_(None)
 
 
 class MenuBarController(Foundation.NSObject):
@@ -205,6 +373,9 @@ class MenuBarController(Foundation.NSObject):
         self._quit_callback: Callable[[], None] = _default_quit
         self._restart_callback: Callable[[], None] | None = None
         self._interval_callback: Callable[[float], None] | None = None
+        self._exposed_rooms_provider: Callable[[], list[Mapping[str, object]]] | None = None
+        self._apply_exposed: Callable[[str, bool], bool] | None = None
+        self._panel: Any = None
         self._executable_path = ""
         self._log_path = ""
         self._menu_open = False
@@ -225,6 +396,8 @@ class MenuBarController(Foundation.NSObject):
         open_log: Callable[[], None] | None = None,
         toggle_autostart: Callable[[], bool | None] | None = None,
         set_interval: Callable[[float], None] | None = None,
+        exposed_rooms_provider: Callable[[], list[Mapping[str, object]]] | None = None,
+        apply_exposed: Callable[[str, bool], bool] | None = None,
         quit: Callable[[], None] | None = None,
         restart: Callable[[], None] | None = None,
         open_kakaotalk: Callable[[], None] | None = None,
@@ -253,6 +426,9 @@ class MenuBarController(Foundation.NSObject):
         self._quit_callback = quit or _default_quit
         self._restart_callback = restart
         self._interval_callback = set_interval
+        self._exposed_rooms_provider = exposed_rooms_provider
+        self._apply_exposed = apply_exposed
+        self._panel: Any = None
         self._actions = {
             status_model.ACTION_SYNC_NOW: lambda: _refresh_after(sync_now),
             status_model.ACTION_TOGGLE_PAUSE: lambda: _refresh_after(toggle_pause),
@@ -270,9 +446,31 @@ class MenuBarController(Foundation.NSObject):
             status_model.ACTION_OPEN_ACCESSIBILITY: lambda: (open_permissions or open_url)(
                 diagnostics.ACCESSIBILITY_URL
             ),
+            status_model.ACTION_MANAGE_EXPOSED: self._open_exposed_panel,
             status_model.ACTION_QUIT: self._quit,
             status_model.ACTION_RESTART: self._restart,
         }
+
+    @objc.python_method
+    def _open_exposed_panel(self) -> None:
+        """노출 방 선택 창을 연다. 로직은 room_picker에 있고 여기서는 배선만 한다."""
+
+        provider = self._exposed_rooms_provider
+        applier = self._apply_exposed
+        if provider is None or applier is None:
+            logger.warning("노출 방 관리가 구성되지 않았습니다")
+            return
+        try:
+            rooms = provider()
+        except Exception:
+            logger.exception("방 목록을 읽지 못했습니다")
+            return
+        if self._panel is None:
+            self._panel = ExposedRoomsPanel.alloc().init()
+        try:
+            self._panel.present(rooms, applier, self.refresh)
+        except Exception:
+            logger.exception("노출 방 창을 열지 못했습니다")
 
     @objc.python_method
     def _quit(self) -> None:
@@ -617,6 +815,8 @@ def run_menubar(
     restart_provider: Callable[[], bool] | None = None,
     interval_provider: Callable[[], float] | None = None,
     set_interval: Callable[[float], None] | None = None,
+    exposed_rooms_provider: Callable[[], list[Mapping[str, object]]] | None = None,
+    apply_exposed: Callable[[str, bool], bool] | None = None,
 ) -> int:
     """*runtime*에서 메뉴바를 만들고 AppKit 이벤트 루프를 실행한다.
 
@@ -644,6 +844,8 @@ def run_menubar(
         toggle_pause=lambda: _toggle_pause(runtime),
         toggle_autostart=toggle_autostart,
         set_interval=set_interval,
+        exposed_rooms_provider=exposed_rooms_provider,
+        apply_exposed=apply_exposed,
         copy_api_token=lambda: runtime.api_token,
         open_log=lambda: open_path(str(runtime.settings.backend_log_path)),
         quit=quit_callback,

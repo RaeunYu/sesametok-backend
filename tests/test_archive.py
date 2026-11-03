@@ -340,3 +340,38 @@ def test_reconcile_marks_existing_rows_from_the_account_id(archive: Archive) -> 
     assert archive.message("100-1").is_from_me is True
     assert archive.message("100-2").is_from_me is False
     assert archive.reconcile_is_from_me(500) == 0  # 이후에는 무변경
+
+
+def test_exposed_column_is_added_to_an_existing_archive(tmp_path: Path) -> None:
+    """exposed 컬럼이 없던 아카이브를 열면 컬럼이 생기고 기존 행은 0으로 채워진다."""
+
+    settings = _settings(tmp_path)
+    instance = Archive.open(settings, KEY, account_hash=ACCOUNT)
+    instance.upsert_rooms([Room("100", "room", "direct")])
+    instance.commit()
+    instance._con.execute("ALTER TABLE chats DROP COLUMN exposed")
+    instance.commit()
+    instance.close()
+
+    reopened = Archive.open(settings, KEY, account_hash=ACCOUNT)
+    try:
+        columns = {row[1] for row in reopened._con.execute("PRAGMA table_info(chats)")}
+        assert "exposed" in columns
+        room = reopened.room("100")
+        assert room is not None and room.exposed is False
+    finally:
+        reopened.close()
+
+
+def test_upsert_rooms_preserves_the_exposed_flag(archive: Archive) -> None:
+    archive.upsert_rooms([Room("100", "room", "direct")])
+    archive.set_room_exposed("100", True)
+
+    # 방 이름이 바뀌어도 노출 선택은 사용자의 것이므로 덮어쓰지 않는다.
+    archive.upsert_rooms([Room("100", "renamed", "direct")])
+
+    room = archive.room("100")
+    assert room is not None
+    assert room.chat_name == "renamed"
+    assert room.exposed is True
+    assert archive.count_exposed_rooms() == 1

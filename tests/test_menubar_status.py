@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from sesametok_backend.app import status as status_model
+from sesametok_backend.app import room_picker
 from sesametok_backend.app.status import (
     SF_SYMBOLS,
     ITEM_AUTOSTART,
@@ -504,3 +505,53 @@ def test_menu_signature_ignores_values_not_drawn_in_the_menu() -> None:
     assert status_model.menu_signature(
         _snapshot(accessibility_trusted=False, room_count=3, poll_seconds=4.0)
     ) == status_model.menu_signature(base)
+
+
+# ------------------------------------------------- 노출 방 선택(순수 로직)
+
+
+def test_room_picker_filters_by_partial_name_case_insensitively() -> None:
+    rooms = [
+        {"chat_id": "1", "chat_name": "Alpha Team", "chat_type": "group",
+         "last_message_at": "2026-01-01T00:00:00+00:00"},
+        {"chat_id": "2", "chat_name": "beta", "chat_type": "direct",
+         "last_message_at": "2026-01-02T00:00:00+00:00"},
+    ]
+
+    assert [r["chat_id"] for r in room_picker.filtered_rooms(rooms, "alpha")] == ["1"]
+    assert [r["chat_id"] for r in room_picker.filtered_rooms(rooms, "BET")] == ["2"]
+    assert [r["chat_id"] for r in room_picker.filtered_rooms(rooms, "  ")] == ["2", "1"]
+
+
+def test_room_picker_sorts_recent_first_and_pushless_first_last() -> None:
+    rooms = [
+        {"chat_id": "old", "chat_name": "a", "last_message_at": "2026-01-01T00:00:00+00:00"},
+        {"chat_id": "none", "chat_name": "b", "last_message_at": None},
+        {"chat_id": "new", "chat_name": "c", "last_message_at": "2026-02-01T00:00:00+00:00"},
+    ]
+
+    assert [r["chat_id"] for r in room_picker.filtered_rooms(rooms)] == ["new", "old", "none"]
+
+
+def test_room_picker_reports_only_changed_rooms() -> None:
+    initial = {"1": False, "2": True, "3": False}
+    selected = {"1": True, "2": True, "3": False}
+
+    assert room_picker.changed_rooms(initial, selected) == [("1", True)]
+
+
+def test_room_picker_summary_and_counts() -> None:
+    rooms = [{"chat_id": "1"}, {"chat_id": "2"}]
+    selected = {"1": True, "2": False}
+
+    assert room_picker.counts(rooms, selected) == (1, 2)
+    assert room_picker.summary(7, 411) == "노출 방 관리… (7/411)"
+
+
+def test_exposed_rooms_menu_item_shows_counts_and_opens_the_panel() -> None:
+    items = status_model.menu_items(_snapshot(room_total=411, exposed_count=7))
+
+    item = _by_id(items, status_model.ITEM_EXPOSED_ROOMS)
+    assert item.title == "노출 방 관리… (7/411)"
+    assert item.action == status_model.ACTION_MANAGE_EXPOSED
+    assert item.enabled is True

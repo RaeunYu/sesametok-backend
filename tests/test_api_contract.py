@@ -457,3 +457,132 @@ def test_closed_room_maps_to_502() -> None:
     from sesametok_backend.api.routes_messages import SEND_STATUS
 
     assert SEND_STATUS["window_not_open"] == 502
+
+
+# ------------------------------------------------------ 노출 대상 방(exposed)
+
+
+def test_patch_room_sets_exposed_and_is_idempotent(api) -> None:
+    service, _, _ = api
+
+    status, payload = call(service, "PATCH", "/v1/rooms/100", body={"exposed": True})
+    assert status == 200
+    assert payload["exposed"] is True
+    assert payload["chat_id"] == "100"
+
+    # 같은 값으로 다시 호출해도 성공한다(멱등).
+    again_status, again = call(service, "PATCH", "/v1/rooms/100", body={"exposed": True})
+    assert again_status == 200
+    assert again["exposed"] is True
+
+    status, payload = call(service, "PATCH", "/v1/rooms/100", body={"exposed": False})
+    assert status == 200
+    assert payload["exposed"] is False
+
+
+def test_patch_room_unknown_id_is_404(api) -> None:
+    service, _, _ = api
+
+    status, payload = call(service, "PATCH", "/v1/rooms/999", body={"exposed": True})
+
+    assert status == 404
+    assert payload["error"]["code"] == "room_not_found"
+
+
+def test_patch_room_rejects_non_boolean_and_non_object_bodies(api) -> None:
+    service, _, _ = api
+
+    status, payload = call(service, "PATCH", "/v1/rooms/100", body={"exposed": "true"})
+    assert status == 400
+    assert payload["error"]["code"] == "bad_request"
+
+    status, _ = call(service, "PATCH", "/v1/rooms/100", body={})
+    assert status == 400
+
+    status, _ = call(service, "PATCH", "/v1/rooms/100", body=[1, 2])
+    assert status == 400
+
+
+def test_list_rooms_exposed_filter(api) -> None:
+    service, _, _ = api
+    call(service, "PATCH", "/v1/rooms/200", body={"exposed": True})
+
+    status, payload = call(service, "GET", "/v1/rooms?exposed=1")
+    assert status == 200
+    assert [room["chat_id"] for room in payload["rooms"]] == ["200"]
+    assert payload["rooms"][0]["exposed"] is True
+
+    status, payload = call(service, "GET", "/v1/rooms?exposed=true")
+    assert [room["chat_id"] for room in payload["rooms"]] == ["200"]
+
+    # 생략하면 기존과 동일하게 전체를 준다.
+    status, payload = call(service, "GET", "/v1/rooms")
+    assert [room["chat_id"] for room in payload["rooms"]] == ["100", "200"]
+
+    status, payload = call(service, "GET", "/v1/rooms?exposed=2")
+    assert status == 400
+    assert payload["error"]["code"] == "bad_request"
+
+
+def test_room_serialisation_adds_exposed_without_touching_existing_fields(api) -> None:
+    service, _, _ = api
+
+    status, payload = call(service, "GET", "/v1/rooms/100")
+
+    assert status == 200
+    assert set(payload) == {
+        "chat_id",
+        "chat_name",
+        "chat_type",
+        "last_message_at",
+        "message_count",
+        "exposed",
+    }
+    assert payload["exposed"] is False
+
+
+def test_patch_room_emits_room_updated_and_consumes_a_seq(api) -> None:
+    service, context, _ = api
+    archive = context.open_archive()
+    try:
+        before = archive.latest_seq()
+    finally:
+        archive.close()
+
+    status, _ = call(service, "PATCH", "/v1/rooms/200", body={"exposed": True})
+    assert status == 200
+
+    archive = context.open_archive()
+    try:
+        events = archive.events_since(before)
+    finally:
+        archive.close()
+
+    assert [event.kind for event in events] == ["room.updated"]
+    assert events[0].seq == before + 1
+    assert events[0].payload["chat_id"] == "200"
+    assert events[0].payload["exposed"] is True
+
+
+def test_streams_are_not_filtered_by_exposure(api) -> None:
+    """비노출 방의 이벤트도 스트림에 그대로 나가야 한다(seq 연속성 계약)."""
+
+    service, context, _ = api
+    archive = context.open_archive()
+    try:
+        before = archive.latest_seq()
+        event = archive.append_event(
+            "message.created", {"chat_id": "200", "message_id": "200-1"}
+        )
+        archive.commit()
+        seq = event.seq
+    finally:
+        archive.close()
+
+    status, body = raw_http(service, "GET", f"/v1/events?since={before}", timeout=1.5)
+    text = body.decode("utf-8", errors="replace")
+
+    assert status == 200
+    assert f"id: {seq}" in text
+    assert "event: message.created" in text
+    assert '"chat_id":"200"' in text
