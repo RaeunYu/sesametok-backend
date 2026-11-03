@@ -22,7 +22,7 @@ def test_defaults_are_local_and_personal() -> None:
     assert settings.poll_seconds == 3.0
     assert settings.lookback_seconds == 900
     assert settings.uds_enabled is True
-    assert settings.max_sends_per_minute == 60
+    assert settings.max_sends_per_minute == 6   # 위에서 6으로 재정의했다(운영 기본값은 60)
     assert settings.event_retention_days == 30
     assert settings.event_retention_max == 100_000
     assert settings.backfill_days == 30

@@ -128,6 +128,8 @@ Slack/Telegram/TUI 같은 인터페이스는 **클라이언트 프로젝트**가
 | `is_feed` | bool | 시스템/피드성 메시지 |
 | `original_message_type` | string \| null | 대체된 경우 원래 타입 |
 | `is_placeholder` | bool | 본문이 대체 문구인지 |
+| `is_from_me` | bool | **읽어들인 계정(사용자 본인)이 보낸 메시지인가** |
+| `origin_client_request_id` | string \| null | 이 메시지가 **이 백엔드의 어느 발신 요청**의 결과인가(에코 상관, ADR-022) |
 
 **타입 판정**(`kakao/reader.py`):
 
@@ -147,6 +149,15 @@ Slack/Telegram/TUI 같은 인터페이스는 **클라이언트 프로젝트**가
 > 본문을 그대로 사용자에게 보여줄지 판단할 때는 `is_placeholder`/`is_feed`를 쓰세요.
 > **`message_type`에 `"feed"`/`"placeholder"` 같은 값은 존재하지 않습니다.**
 
+**자기 메시지와 에코(양방향 필수)**: 백엔드가 보낸 메시지는 카카오톡 DB에 기록되고, 폴러가
+그것을 `message.created`로 **다시 발행**합니다. 이때
+
+- `is_from_me == True` — 내가(이 계정이) 보낸 메시지.
+- `origin_client_request_id == "<내가 보낸 client_request_id>"` — **이 백엔드의 그 요청**의 결과.
+
+→ **이 값이 내가 보낸 요청과 같으면 그 이벤트를 전달하지 마세요.** 그것이 에코 억제입니다.
+추측(텍스트+방+시간창)이나 sender_id 학습이 필요 없습니다. 자세한 절차는 5.5절.
+
 ### Event
 
 | 필드 | 타입 | 설명 |
@@ -162,6 +173,8 @@ Slack/Telegram/TUI 같은 인터페이스는 **클라이언트 프로젝트**가
 | `room.updated` | `Room` 객체 전체 |
 | `send.result` | `client_request_id`, `chat_id`, `mode`, `result`, `chars`, `code` |
 
+> `message.created`의 payload에는 `is_from_me`/`origin_client_request_id`도 들어 있습니다
+> (Message 객체 전체이므로). 에코 판정은 이 값으로 하세요.
 > `payload` 안에는 `seq`가 **없습니다**. 멱등 키로 쓰려면 **본문 최상위 `seq`** 또는
 > webhook 헤더 `X-Sesametok-Event-Seq`를 쓰세요.
 > `send.result`의 payload에는 **본문이 없습니다**(로그·이벤트에 본문을 남기지 않는 원칙).
@@ -526,7 +539,35 @@ SSE/webhook으로 관찰합니다. 폴러가 없으면 `503 poller_unavailable`(
   - **SSE**: 실시간성 좋음. 단일 소비자·재연결/갭 감지 로직 필요.
   - **Webhook**: 프로세스 분리·다중 소비자에 유리. 멱등 처리 + 유실 보정 필요.
 
-### 5.5 최소 예제 (파이썬 표준 라이브러리만)
+### 5.5 에코 억제 — 양방향 루프를 백엔드 연결점으로 끊기
+
+```
+발신: POST /v1/messages  (client_request_id = R)
+   ↓ (전송 성공, send.result)
+카카오톡 DB에 자기 메시지 기록
+   ↓ (폴러, 수 초 뒤)
+message.created  payload.origin_client_request_id == R
+   ↓
+클라이언트: origin_client_request_id 가 내가 보낸 R 과 같으면 **전달하지 않는다**
+```
+
+규칙:
+
+1. **발신할 때 항상 `client_request_id`를 보내세요.** 없으면 연결 정보가 만들어지지 않습니다.
+2. 이벤트/조회의 `origin_client_request_id`가 **내 요청 id와 같으면 에코**입니다 → 외부 채널로
+   전달하지 마세요.
+3. `is_from_me == True`이고 `origin_client_request_id == None`이면 **카카오톡 앱에서 직접 보낸**
+   메시지입니다. 전달할지는 정책 문제입니다(보통 전달하지 않거나, "다른 기기에서 보냄"으로 표시).
+4. 연결은 **15분 창, 1회 소비, FIFO**입니다. 같은 본문을 여러 번 보내도 순서대로 하나씩 연결됩니다.
+   창을 벗어나거나 백엔드가 재시작되면 연결이 사라질 수 있습니다 → 이때는 3번 규칙으로 처리하세요
+   (안전한 열화: 에코가 한 번 더 전달될 수 있지만, **중복 전송**은 되지 않습니다).
+5. REST로 히스토리를 다시 받아도 같은 필드가 있으므로, 재연결 후 재수집 시에도 에코를 걸러낼 수
+   있습니다.
+
+> 이 기능이 없던 시절에는 클라이언트가 직접 휴리스틱을 만들어야 했습니다. 지금은 그럴 필요가
+> 없으며, 만들어 붙이면 오히려 정상 메시지를 놓칠 수 있습니다(7절 참고).
+
+### 5.6 최소 예제 (파이썬 표준 라이브러리만)
 
 ```python
 import json, urllib.request
@@ -570,7 +611,7 @@ if result.get("result") != "dry_run":
 ### 6.1 이 저장소의 테스트
 
 ```bash
-./.venv/bin/python -m pytest -q                       # 전체(현재 400개 통과)
+./.venv/bin/python -m pytest -q                       # 전체(현재 411개 통과)
 ./.venv/bin/python -m pytest -q tests/test_api_contract.py
 ./.venv/bin/python -m compileall -q src tests
 ```
@@ -597,14 +638,17 @@ if result.get("result") != "dry_run":
    - `send`에 `text` 누락 → `400 bad_request`("text가 필요하다")
    - `limit=0` → `400 bad_request`
    - 같은 `client_request_id` 재요청 → 200 `duplicate_request`
-6. **실제 발신 검증(마지막 단계)**: 사용자 승인 + **대상 방을 열어 둔 상태**에서, 본문은
+6. **에코 상관 검증**: 발신 성공 후 몇 초 뒤 `message.created`에서 `origin_client_request_id`가
+   보낸 값과 같은지 확인하세요. 같은 본문을 두 번 보내면 두 이벤트가 각각 다른 요청 id를 갖는지도
+   확인할 수 있습니다(순서 보장).
+7. **실제 발신 검증(마지막 단계)**: 사용자 승인 + **대상 방을 열어 둔 상태**에서, 본문은
    `.......` 같은 무해한 문자열로 **1건만**. `unconfirmed`면 **재시도하지 말고** 결과를 보고합니다.
 
 ### 6.3 현재 머신의 실측 상태(참고, 시점에 따라 변동)
 
 | 항목 | 값 |
 |---|---|
-| 테스트 | **400 passed** |
+| 테스트 | **411 passed** |
 | 실행 | launchd → `SesametokBackend.app` → python `foreground --managed` |
 | 아카이브 | 방·메시지 수는 시점에 따라 증가(예: 411방 / 11,455메시지) |
 | 권한 | 손쉬운 사용 = 백엔드 기준 `true` / 셸 기준 `false` (앱에만 귀속) |
@@ -640,6 +684,8 @@ if result.get("result") != "dry_run":
 | API를 `0.0.0.0`에 바인딩하거나 인터넷에 노출 | 로컬 개인 대화의 무단 노출 | `127.0.0.1`/UDS만. 터널링 금지 |
 | 카카오톡 DB를 쓰기/수정 | 원본 손상 | 읽기 전용 API만 사용 |
 | `unconfirmed` 결과를 자동 재시도 | 중복 전송 | 사용자 확인, 새 `client_request_id`로 새 요청 |
+| 에코 억제를 클라이언트가 자체 발명(텍스트+시간창) | 백엔드가 `origin_client_request_id`를 준다 | 그 값으로 판정. 휴리스틱은 정상 메시지를 놓친다 |
+| 발신 시 `client_request_id` 생략 | 에코 연결 정보가 없다 | 항상 보낼 것 |
 | `client_request_id` 재사용(다른 본문) | 이전 결과만 반환됨 | 요청마다 새 UUID |
 | HTTP 상태만으로 발신 결과 판정 | `unconfirmed`가 200으로도 온다 | `result`·`error.code`로 판정 |
 | 백엔드가 방을 열어 줄 것이라 가정 | **제거됨**(ADR-021) | 창이 없으면 `502 window_not_open` → 사용자 안내 |
@@ -699,7 +745,8 @@ curl -s http://127.0.0.1:8756/health
 | `503 send_unavailable` | 발신 워커 미구성 | 백엔드 기동 옵션(`SESAMETOK_API`) 확인 |
 | `409 target_ambiguous` / `ambiguous_room` | 같은 이름 방/창이 여럿 | 사용자가 중복 창을 닫거나 방을 구분해야 함(클라이언트가 풀 수 없음) |
 | 발신 `room`이 `null`, `chars`가 0 | `duplicate_request` | 이미 처리된 요청. 정상 |
-| `status`가 `중지됨`인데 API는 응답 | 중단된 재시작으로 락 inode가 어긋난 드문 경우 | `stop` → `start` |
+| `status`가 `중지됨`인데 API는 응답 | **제한된 실행 환경(샌드박스 등)에서 `flock` 가시성이 낮아**
+  락 소유를 못 볼 수 있음(실측: 샌드박스 밖에서는 정상) | `curl /health`로 판정. 제품 결함 아님 |
 | `restart`가 "시작하지 않았습니다"인데 실제로 뜸 | 대기 로직 오탐(알려진 결함) | `status`로 실제 상태 확인 |
 
 ---
@@ -732,6 +779,8 @@ curl -s http://127.0.0.1:8756/health
 15. **이미지 발송 철회**: 인터페이스별 업로드 방식 차이 + outbox 중복 저장. 관련 코드·테스트·
     문서를 **삭제**했습니다(새 ADR 없이 히스토리에서 제거).
 16. **발신 레이트 리밋 기본값 변경**: 6/3 → **60/50**(커밋 `0f29900`).
+17. **발신 에코 상관**(ADR-022): `is_from_me`와 `origin_client_request_id`를 추가해, 양방향
+    클라이언트가 자기 발신이 되돌아오는 이벤트를 **추측 없이** 걸러낼 수 있게 했습니다.
 
 **제거된 것을 기억하세요**: 자동 방 열기, 이미지/파일 발신, `image_path` API 필드, outbox 디렉터리,
 커튼 기반 취소(코드는 잔존하나 미사용). `HANDOFF_MESSAGING.md`는 이 제거 이전의 역사 문서이며

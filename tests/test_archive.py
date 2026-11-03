@@ -244,3 +244,99 @@ def test_send_request_idempotency_record(archive: Archive) -> None:
     record = archive.get_send_request("req-1")
     assert record["result"] == "sent"
     assert record["completed_at"] is not None
+
+
+# --------------------------------------------------- 발신 에코 상관
+
+
+def test_echo_expectation_is_claimed_exactly_once(archive: Archive) -> None:
+    archive.add_echo_expectation(
+        client_request_id="req-1", chat_id="100", text="hello"
+    )
+
+    assert archive.claim_echo(chat_id="100", text="hello", message_id="100-1") == "req-1"
+    # 두 번째 자기 메시지는 같은 기대를 다시 소비하지 않는다.
+    assert archive.claim_echo(chat_id="100", text="hello", message_id="100-2") is None
+
+
+def test_echo_expectations_are_consumed_in_order(archive: Archive) -> None:
+    # 같은 본문을 두 번 보낸 경우: 먼저 기록된 기대부터 하나씩 소비한다.
+    archive.add_echo_expectation(client_request_id="req-1", chat_id="100", text="ok")
+    archive.add_echo_expectation(client_request_id="req-2", chat_id="100", text="ok")
+
+    assert archive.claim_echo(chat_id="100", text="ok", message_id="100-1") == "req-1"
+    assert archive.claim_echo(chat_id="100", text="ok", message_id="100-2") == "req-2"
+
+
+def test_echo_is_not_claimed_for_another_room_or_text(archive: Archive) -> None:
+    archive.add_echo_expectation(
+        client_request_id="req-1", chat_id="100", text="hello"
+    )
+
+    assert archive.claim_echo(chat_id="200", text="hello", message_id="200-1") is None
+    assert archive.claim_echo(chat_id="100", text="other", message_id="100-2") is None
+    # 다른 방/본문 시도는 기대를 소비하지 않았으므로 여전히 잡을 수 있다.
+    assert archive.claim_echo(chat_id="100", text="hello", message_id="100-3") == "req-1"
+
+
+def test_expired_echo_expectation_is_ignored(archive: Archive) -> None:
+    archive.add_echo_expectation(
+        client_request_id="req-1",
+        chat_id="100",
+        text="hello",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+
+    assert (
+        archive.claim_echo(chat_id="100", text="hello", message_id="100-1", window_seconds=1)
+        is None
+    )
+
+
+def test_echo_expectations_are_pruned(archive: Archive) -> None:
+    archive.add_echo_expectation(
+        client_request_id="req-1",
+        chat_id="100",
+        text="hello",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+
+    assert archive.prune_echo_expectations(older_than_seconds=1) == 1
+
+
+def test_origin_link_round_trips_through_the_reader(archive: Archive) -> None:
+    archive.apply_message_diff([_message("100-1", is_from_me=True)])
+    archive.set_message_origin("100", "100-1", "req-1")
+    archive.commit()
+
+    stored = archive.message("100-1")
+    assert stored is not None
+    assert stored.is_from_me is True
+    assert stored.origin_client_request_id == "req-1"
+
+
+def test_is_from_me_defaults_to_false_for_unknown_rows(archive: Archive) -> None:
+    archive.apply_message_diff([_message("100-1")])
+    archive.commit()
+
+    stored = archive.message("100-1")
+    assert stored is not None
+    assert stored.is_from_me is False
+    assert stored.origin_client_request_id is None
+
+
+def test_reconcile_marks_existing_rows_from_the_account_id(archive: Archive) -> None:
+    """컬럼 추가 이전에 저장된 행도 계정 id와 맞춰 자기 메시지 표시를 바로잡는다."""
+
+    archive.apply_message_diff(
+        [
+            _message("100-1", sender_id="500"),
+            _message("100-2", sender_id="777"),
+        ]
+    )
+    archive.commit()
+
+    assert archive.reconcile_is_from_me(500) == 1  # 한 건만 바뀐다
+    assert archive.message("100-1").is_from_me is True
+    assert archive.message("100-2").is_from_me is False
+    assert archive.reconcile_is_from_me(500) == 0  # 이후에는 무변경

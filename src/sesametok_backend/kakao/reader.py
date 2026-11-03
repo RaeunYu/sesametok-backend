@@ -632,6 +632,7 @@ class KakaoReader:
             is_feed=is_feed,
             original_message_type=original_type,
             is_placeholder=is_placeholder,
+            is_from_me=str(sender_id) == str(self._user_id),
         )
 
     # ---------------------------------------------------------------- 스냅샷

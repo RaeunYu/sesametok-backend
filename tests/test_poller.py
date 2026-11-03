@@ -350,3 +350,60 @@ def test_lengthening_the_interval_waits_instead_of_polling_immediately(
     finally:
         poller.stop()
         poller.join(timeout=3)
+
+
+def test_own_message_is_linked_to_the_send_request(tmp_path: Path, archive: Archive) -> None:
+    """발신 후 폴러가 관찰한 자기 메시지는 그 요청과 연결돼야 한다(에코 억제의 근거)."""
+
+    settings = _settings(tmp_path)
+    archive.add_echo_expectation(
+        client_request_id="req-1", chat_id="100", text="sent by backend"
+    )
+    archive.commit()
+
+    echoed = _message(
+        "100-1",
+        timestamp="2026-01-01T00:00:05+00:00",
+        text="sent by backend",
+        is_from_me=True,
+    )
+    source = FakeSource([_snapshot(), _snapshot(messages=[echoed])])
+    bus = EventBus()
+    poller = _poller(settings, archive, source, bus)
+
+    poller.poll_once()          # 백필: 이벤트 없음, 연결도 하지 않는다
+    assert archive.message("100-1") is None
+    poller.poll_once()          # 이후: 자기 메시지를 관찰하고 요청과 연결
+
+    stored = archive.message("100-1")
+    assert stored is not None
+    assert stored.is_from_me is True
+    assert stored.origin_client_request_id == "req-1"
+
+    events = [e for e in archive.events_since(0) if e.kind == "message.created"]
+    assert len(events) == 1
+    assert events[0].payload["origin_client_request_id"] == "req-1"
+
+
+def test_own_message_without_a_send_request_is_not_linked(
+    tmp_path: Path, archive: Archive
+) -> None:
+    """카카오톡 앱에서 직접 보낸 메시지는 연결할 요청이 없으므로 None으로 남는다."""
+
+    settings = _settings(tmp_path)
+    manual = _message(
+        "100-1",
+        timestamp="2026-01-01T00:00:05+00:00",
+        text="typed in the app",
+        is_from_me=True,
+    )
+    source = FakeSource([_snapshot(), _snapshot(messages=[manual])])
+    poller = _poller(settings, archive, source, EventBus())
+
+    poller.poll_once()
+    poller.poll_once()
+
+    stored = archive.message("100-1")
+    assert stored is not None
+    assert stored.is_from_me is True
+    assert stored.origin_client_request_id is None

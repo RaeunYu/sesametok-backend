@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 
@@ -275,6 +275,8 @@ class Poller(threading.Thread):
                 messages = messages[-self.settings.backfill_max :]
 
         diff = self.archive.apply_message_diff(messages)
+        if not backfill:
+            diff = self._link_echoes(diff)
         room_diff = self.archive.upsert_rooms(snapshot.rooms)
         self.archive.set_poll_state(cursor=now, last_success_at=rfc3339(now))
         self.archive.commit()
@@ -310,6 +312,35 @@ class Poller(threading.Thread):
             skipped_rows=snapshot.skipped_rows,
             duration_ms=duration_ms,
         )
+
+    def _link_echoes(self, diff: MessageDiff) -> MessageDiff:
+        """방금 저장된 **자기** 메시지를 발신 요청과 연결한다(에코 억제의 근거).
+
+        연결에 성공하면 그 메시지의 ``origin_client_request_id``가 채워지고, 클라이언트는
+        "내가 방금 보낸 그것"임을 추측 없이 알 수 있다. 연결되지 않은 자기 메시지는
+        카카오톡 앱에서 직접 보낸 것이므로 ``None``으로 남는다.
+        """
+
+        if not diff.created:
+            return diff
+        linked: list[Message] = []
+        changed = False
+        for message in diff.created:
+            request_id: str | None = None
+            if message.is_from_me:
+                request_id = self.archive.claim_echo(
+                    chat_id=message.chat_id,
+                    text=message.text,
+                    message_id=message.message_id,
+                )
+            if request_id:
+                self.archive.set_message_origin(
+                    message.chat_id, message.message_id, request_id
+                )
+                message = replace(message, origin_client_request_id=request_id)
+                changed = True
+            linked.append(message)
+        return replace(diff, created=tuple(linked)) if changed else diff
 
     def _publish(self, diff: MessageDiff, room_diff: RoomDiff) -> None:
         changes: list[tuple[str, Message]] = [

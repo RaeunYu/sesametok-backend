@@ -168,3 +168,43 @@ def test_snapshot_sets_last_message_at(reader: KakaoReader) -> None:
     assert by_id["200"].last_message_at == "2026-01-01T00:04:00+00:00"
     assert snapshot.skipped_rows == 1
     assert "400" in snapshot.open_chat_ids
+
+
+
+def test_is_from_me_marks_only_the_accounts_own_messages() -> None:
+    """자기 메시지 표시는 계정 user_id와 발신자 id를 비교해 정한다."""
+
+    from sesametok_backend.kakao.reader import KakaoReader
+    from sesametok_backend.models import Room
+
+    reader = KakaoReader(None, user_id=SYNTHETIC_USER_ID)
+    index = {"100": Room(chat_id="100", chat_name="room", chat_type="direct")}
+
+    mine = reader._normalise(
+        {
+            "logId": 1,
+            "chatId": 100,
+            "authorId": SYNTHETIC_USER_ID,
+            "message": "hi",
+            "type": 1,
+            "sentAt": 1767225600,
+        },
+        index,
+        {},
+    )
+    theirs = reader._normalise(
+        {
+            "logId": 2,
+            "chatId": 100,
+            "authorId": 999,
+            "message": "yo",
+            "type": 1,
+            "sentAt": 1767225601,
+        },
+        index,
+        {},
+    )
+
+    assert mine is not None and theirs is not None
+    assert mine.is_from_me is True
+    assert theirs.is_from_me is False

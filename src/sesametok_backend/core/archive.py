@@ -16,7 +16,8 @@ import json
 import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlcipher3 import dbapi2 as sqlcipher
@@ -48,11 +49,17 @@ FINGERPRINT_COLUMNS = (
     "is_placeholder",
 )
 SELECT_MESSAGE = "SELECT chat_id, message_id, " + ", ".join(FINGERPRINT_COLUMNS) + " FROM messages"
+# 읽기용: 지문 컬럼 뒤에 메타데이터 2개를 덧붙인다(지문 비교에는 쓰지 않는다).
+SELECT_MESSAGE_ROW = (
+    "SELECT chat_id, message_id, " + ", ".join(FINGERPRINT_COLUMNS)
+    + ", is_from_me, origin_client_request_id FROM messages"
+)
 
 INSERT_MESSAGE = (
     "INSERT INTO messages (account_hash, chat_id, message_id, chat_name, chat_type, "
     "sender_id, sender_nickname, timestamp, text, message_type, reply_to_message_id, "
-    "is_feed, original_message_type, is_placeholder) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    "is_feed, original_message_type, is_placeholder, is_from_me, origin_client_request_id) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 )
 UPDATE_MESSAGE = (
     "UPDATE messages SET chat_name=?, chat_type=?, sender_id=?, sender_nickname=?, "
@@ -77,6 +84,8 @@ CREATE TABLE IF NOT EXISTS messages (
     is_feed INTEGER NOT NULL DEFAULT 0,
     original_message_type TEXT,
     is_placeholder INTEGER NOT NULL DEFAULT 0,
+    is_from_me INTEGER NOT NULL DEFAULT 0,
+    origin_client_request_id TEXT,
     PRIMARY KEY (account_hash, chat_id, message_id)
 );
 CREATE TABLE IF NOT EXISTS chats (
@@ -115,14 +124,50 @@ CREATE TABLE IF NOT EXISTS webhooks (
     last_success_at TEXT,
     last_error TEXT
 );
+CREATE TABLE IF NOT EXISTS echo_expectations (
+    account_hash TEXT NOT NULL,
+    client_request_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    text_hash TEXT NOT NULL,
+    char_len INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    consumed_message_id TEXT,
+    PRIMARY KEY (account_hash, client_request_id)
+);
 CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, timestamp, message_id);
+CREATE INDEX IF NOT EXISTS idx_echo_pending
+    ON echo_expectations(account_hash, chat_id, consumed_message_id);
 CREATE INDEX IF NOT EXISTS idx_messages_account_ts ON messages(account_hash, timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
 """
 
 
+ECHO_WINDOW_SECONDS = 900
+"""발신 → 에코 관찰 사이로 인정하는 최대 간격(초)."""
+
+
 def now_utc() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _shift(rfc3339_text: str, seconds: int) -> str:
+    return (datetime.fromisoformat(rfc3339_text) + timedelta(seconds=seconds)).isoformat()
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _migrate_schema(connection) -> None:
+    """이전 아카이브에 새 컬럼을 더한다(기존 데이터는 기본값으로 남는다)."""
+
+    existing = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
+    for name, ddl in (
+        ("is_from_me", "ALTER TABLE messages ADD COLUMN is_from_me INTEGER NOT NULL DEFAULT 0"),
+        ("origin_client_request_id", "ALTER TABLE messages ADD COLUMN origin_client_request_id TEXT"),
+    ):
+        if name not in existing:
+            connection.execute(ddl)
 
 
 def _chunks(items: Sequence[str], size: int = CHUNK) -> Iterable[Sequence[str]]:
@@ -152,6 +197,8 @@ def row_to_message(row: Sequence) -> Message:
         is_feed=bool(row[10]),
         original_message_type=row[11],
         is_placeholder=bool(row[12]),
+        is_from_me=bool(row[13]),
+        origin_client_request_id=row[14],
     )
 
 
@@ -193,6 +240,7 @@ class Archive:
         if initialize:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCHEMA)
+            _migrate_schema(connection)
             connection.commit()
             tighten(path)
         return cls(connection, account_hash=account_hash, path=path)
@@ -326,6 +374,8 @@ class Archive:
                     int(message.is_feed),
                     message.original_message_type,
                     int(message.is_placeholder),
+                    int(message.is_from_me),
+                    message.origin_client_request_id,
                 ),
             )
 
@@ -401,7 +451,7 @@ class Archive:
             params.extend([anchor[0], anchor[1]])
 
         sql = (
-            f"{SELECT_MESSAGE} WHERE {' AND '.join(where)} "
+            f"{SELECT_MESSAGE_ROW} WHERE {' AND '.join(where)} "
             "ORDER BY timestamp DESC, message_id DESC LIMIT ?"
         )
         params.append(bounded + 1)
@@ -419,10 +469,101 @@ class Archive:
         if not chat_id:
             return None
         row = self._con.execute(
-            f"{SELECT_MESSAGE} WHERE account_hash = ? AND chat_id = ? AND message_id = ?",
+            f"{SELECT_MESSAGE_ROW} WHERE account_hash = ? AND chat_id = ? AND message_id = ?",
             (self.account_hash, chat_id, message_id),
         ).fetchone()
         return None if row is None else row_to_message(row)
+
+    # ------------------------------------------------------- 발신 에코 상관
+
+    def add_echo_expectation(
+        self,
+        *,
+        client_request_id: str,
+        chat_id: str,
+        text: str,
+        created_at: str | None = None,
+    ) -> None:
+        """발신 성공을 기록한다.
+
+        폴러가 곧 관찰할 자기 메시지를 이 요청과 연결하기 위한 것이다. 본문은 해시와
+        길이로만 남긴다.
+        """
+
+        self._con.execute(
+            "INSERT OR REPLACE INTO echo_expectations (account_hash, client_request_id, "
+            "chat_id, text_hash, char_len, created_at, consumed_message_id) "
+            "VALUES (?,?,?,?,?,?,NULL)",
+            (
+                self.account_hash,
+                client_request_id,
+                str(chat_id),
+                _text_hash(text),
+                len(text),
+                created_at or now_utc(),
+            ),
+        )
+
+    def claim_echo(
+        self,
+        *,
+        chat_id: str,
+        text: str,
+        message_id: str,
+        window_seconds: int = ECHO_WINDOW_SECONDS,
+    ) -> str | None:
+        """이 본문에 대응하는 미소비 발신 기대를 하나 소비하고 그 요청 id를 준다."""
+
+        cutoff = _shift(now_utc(), -window_seconds)
+        row = self._con.execute(
+            "SELECT client_request_id FROM echo_expectations "
+            "WHERE account_hash = ? AND chat_id = ? AND text_hash = ? AND char_len = ? "
+            "AND consumed_message_id IS NULL AND created_at >= ? "
+            "ORDER BY created_at LIMIT 1",
+            (self.account_hash, str(chat_id), _text_hash(text), len(text), cutoff),
+        ).fetchone()
+        if row is None:
+            return None
+        self._con.execute(
+            "UPDATE echo_expectations SET consumed_message_id = ? "
+            "WHERE account_hash = ? AND client_request_id = ?",
+            (str(message_id), self.account_hash, str(row[0])),
+        )
+        return str(row[0])
+
+    def set_message_origin(
+        self, chat_id: str, message_id: str, client_request_id: str
+    ) -> None:
+        """관찰된 자기 메시지에 발신 요청 id를 기록한다."""
+
+        self._con.execute(
+            "UPDATE messages SET origin_client_request_id = ? "
+            "WHERE account_hash = ? AND chat_id = ? AND message_id = ?",
+            (client_request_id, self.account_hash, str(chat_id), str(message_id)),
+        )
+
+    def reconcile_is_from_me(self, user_id: int) -> int:
+        """기존 행의 자기 메시지 표시를 계정 id와 맞춘다.
+
+        ``is_from_me`` 컬럼이 생기기 전에 저장된 행은 기본값(0)이므로, 시작할 때 한 번
+        정합화한다. 이미 맞는 행은 건드리지 않으므로 이후 호출은 사실상 무료다.
+        """
+
+        own = str(user_id)
+        cursor = self._con.execute(
+            "UPDATE messages SET is_from_me = CASE WHEN sender_id = ? THEN 1 ELSE 0 END "
+            "WHERE is_from_me != CASE WHEN sender_id = ? THEN 1 ELSE 0 END",
+            (own, own),
+        )
+        return cursor.rowcount or 0
+
+    def prune_echo_expectations(self, *, older_than_seconds: int = 86400) -> int:
+        cutoff = _shift(now_utc(), -older_than_seconds)
+        cursor = self._con.execute(
+            "DELETE FROM echo_expectations WHERE account_hash = ? AND created_at < ?",
+            (self.account_hash, cutoff),
+        )
+        return cursor.rowcount or 0
 
     # ----------------------------------------------------------------- 이벤트
 

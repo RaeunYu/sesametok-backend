@@ -42,6 +42,15 @@ class Message:
     # ADR-003: 지원하지 않는 타입은 원래 타입을 유지한 채 text로 저장한다.
     original_message_type: str | None = None
     is_placeholder: bool = False
+    is_from_me: bool = False
+    """읽어들인 계정(사용자 본인)이 보낸 메시지인가."""
+
+    origin_client_request_id: str | None = None
+    """이 메시지가 백엔드의 어느 발신 요청(``client_request_id``)의 결과인가.
+
+    발신 직후 폴러가 **같은 방·같은 본문의 자기 메시지**를 관찰하면 그 요청과 연결한다.
+    연결되지 않으면 ``None``(카카오톡 앱에서 직접 보낸 경우 등)이다. 에코 억제의 근거다.
+    """
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

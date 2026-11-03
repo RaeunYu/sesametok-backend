@@ -231,6 +231,11 @@ class Runtime:
             self.settings, self._archive_key, account_hash=self.account_hash, initialize=True
         )
         try:
+            if self.identity is not None:
+                fixed = archive.reconcile_is_from_me(self.identity.user_id)
+                if fixed:
+                    logger.info("자기 메시지 표시를 %d건 정합화했다", fixed)
+                archive.commit()
             logger.info(
                 "아카이브 준비 완료: 방 %d개, 메시지 %d개, 이벤트 %d개",
                 archive.count_rooms(),

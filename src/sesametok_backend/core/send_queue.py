@@ -320,6 +320,13 @@ class SendQueue(threading.Thread):
     def _finalise(self, archive: Archive, request: SendRequest, result: SendResult) -> None:
         if request.client_request_id:
             archive.complete_send_request(request.client_request_id, result.result)
+            if result.result == "sent" and request.text:
+                # 폴러가 곧 카카오톡 DB에서 관찰할 자기 메시지를 이 요청과 연결한다.
+                archive.add_echo_expectation(
+                    client_request_id=request.client_request_id,
+                    chat_id=str(request.chat_id),
+                    text=request.text,
+                )
         event = archive.append_event(
             "send.result",
             {
